@@ -13,7 +13,8 @@ env:
   AWS_REGION: eu-central-1
   FUNCTION_NAME: mcp-server
   API_GATEWAY_NAME: mcp-server-api
-  ROLE_NAME: mcp-server-role
+  ROLE_NAME: mini-mcp-server-role
+  POLICY_NAME: mcp-server-api-policy
 
 jobs:
   cleanup:
@@ -65,6 +66,9 @@ jobs:
         run: |
           echo "🔓 Detaching IAM role policies: ${{ env.ROLE_NAME }}"
           if aws iam get-role --role-name ${{ env.ROLE_NAME }} >/dev/null 2>&1; then
+            # Get account ID for policy ARN
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            
             # Detach basic execution role
             aws iam detach-role-policy \
               --role-name ${{ env.ROLE_NAME }} \
@@ -74,6 +78,11 @@ jobs:
             aws iam detach-role-policy \
               --role-name ${{ env.ROLE_NAME }} \
               --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess || echo "S3 read-only policy not attached"
+            
+            # Detach custom API Gateway policy
+            aws iam detach-role-policy \
+              --role-name ${{ env.ROLE_NAME }} \
+              --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/${{ env.POLICY_NAME }} || echo "API Gateway policy not attached"
             
             echo "✅ IAM role policies detached"
           else
@@ -90,6 +99,27 @@ jobs:
             echo "ℹ️ IAM role not found, skipping..."
           fi
 
+      - name: Delete IAM Policy
+        run: |
+          echo "🗑️ Deleting IAM policy: ${{ env.POLICY_NAME }}"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          POLICY_ARN="arn:aws:iam::$ACCOUNT_ID:policy/${{ env.POLICY_NAME }}"
+          
+          if aws iam get-policy --policy-arn $POLICY_ARN >/dev/null 2>&1; then
+            # Delete all policy versions first
+            aws iam list-policy-versions --policy-arn $POLICY_ARN --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text | tr '\t' '\n' | while read version; do
+              if [ ! -z "$version" ]; then
+                aws iam delete-policy-version --policy-arn $POLICY_ARN --version-id $version || echo "Failed to delete version $version"
+              fi
+            done
+            
+            # Delete the policy
+            aws iam delete-policy --policy-arn $POLICY_ARN
+            echo "✅ IAM policy deleted successfully"
+          else
+            echo "ℹ️ IAM policy not found, skipping..."
+          fi
+
       - name: Cleanup Summary
         run: |
           echo "🎉 Cleanup completed!"
@@ -97,6 +127,7 @@ jobs:
           echo "   - Lambda Function: ${{ env.FUNCTION_NAME }}"
           echo "   - API Gateway: ${{ env.API_GATEWAY_NAME }}"
           echo "   - IAM Role: ${{ env.ROLE_NAME }}"
+          echo "   - IAM Policy: ${{ env.POLICY_NAME }}"
           echo ""
           echo "💡 To redeploy, run the main deployment workflow or use:"
           echo "   ./create_deployment_package.sh && aws lambda create-function ..."
