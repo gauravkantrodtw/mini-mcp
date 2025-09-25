@@ -12,8 +12,8 @@ async def test_proxy():
     print("Testing MCP Proxy...")
     
     # Show current configuration
-    mcp_url = os.getenv("MCP_SERVER_URL")
-    print(f"🔗 MCP Server URL: {mcp_url}")
+    api_gateway_url = os.getenv("API_GATEWAY_URL")
+    print(f"🔗 API Gateway URL: {api_gateway_url}")
     
     # Test list_tools
     print("\n1. Testing list_tools...")

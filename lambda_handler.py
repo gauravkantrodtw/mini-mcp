@@ -14,6 +14,7 @@ from starlette.routing import Route
 from server import mcp
 import tools.csv_tools  # auto-registers all MCP tools
 import tools.additional_tools  # auto-registers additional MCP tools
+import tools.s3_csv_tools  # auto-registers S3 CSV tools
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)

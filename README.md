@@ -5,6 +5,7 @@ A lightweight MCP (Model Context Protocol) server for CSV analysis, deployable t
 ## Features
 
 - **CSV Analysis**: Analyze CSV files with row/column counts
+- **S3 CSV Tools**: Read and analyze CSV files directly from AWS S3
 - **AWS Lambda Deployment**: Serverless deployment with API Gateway
 - **Cursor Integration**: Works with Cursor IDE via MCP proxy
 - **Configurable**: Environment-based configuration
@@ -50,6 +51,23 @@ uv run lambda_handler.py
 uv run test_proxy.py
 ```
 
+### S3 CSV Tools
+
+The server includes a simple tool for getting basic information from CSV files stored in AWS S3:
+
+- **`analyze_s3_csv`**: Basic info - count, columns, and sample 50 records
+
+**📊 Ultra Simple (KISS):**
+- **Pandas integration** - uses `pd.read_csv()` directly with S3 URLs
+- **No analysis** - just count, columns, and sample data
+- **Easy to use** - just provide bucket name and file key
+
+**Example Usage:**
+```bash
+# Get basic info from a CSV file in S3
+analyze_s3_csv("my-bucket", "data/sales.csv")
+```
+
 ### Deployment
 
 ```bash
@@ -81,8 +99,13 @@ The MCP proxy automatically connects to your deployed server using the configure
 ├── lambda_handler.py          # AWS Lambda entry point
 ├── mcp_proxy.py              # MCP proxy for Cursor
 ├── server.py                 # MCP server configuration
-├── tools/csv_tools.py        # CSV analysis tools
-├── utils/file_reader.py      # File utilities
+├── tools/
+│   ├── csv_tools.py          # Local CSV analysis tools
+│   ├── additional_tools.py   # Additional CSV tools
+│   └── s3_csv_tools.py       # S3 CSV analysis tools
+├── utils/
+│   ├── file_reader.py        # Local file utilities
+│   └── s3_csv_processor.py   # S3 CSV processing utilities
 ├── create_deployment_package.sh  # Deployment script
 └── .github/workflows/deploy.yml  # GitHub Actions
 ```

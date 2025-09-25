@@ -17,8 +17,8 @@ from mcp.types import Tool, TextContent
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configurable MCP server URL
-LAMBDA_URL = os.getenv("MCP_SERVER_URL")
+# Configurable API Gateway URL
+API_GATEWAY_URL = os.getenv("API_GATEWAY_URL")
 
 def extract_schema_from_description(tool_data):
     """Extract input schema from tool description."""
@@ -63,15 +63,15 @@ server = Server("mini-mcp-server")
 
 @server.list_tools()
 async def list_tools() -> List[Tool]:
-    """List available tools from the Lambda function."""
-    if not LAMBDA_URL:
-        logger.error("MCP_SERVER_URL not configured")
+    """List available tools from the API Gateway."""
+    if not API_GATEWAY_URL:
+        logger.error("API_GATEWAY_URL not configured")
         return []
     
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                LAMBDA_URL,
+                API_GATEWAY_URL,
                 json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
                 headers={"Content-Type": "application/json"},
                 timeout=30.0
@@ -88,8 +88,8 @@ async def list_tools() -> List[Tool]:
                         )
                         for tool_data in result["result"]
                     ]
-                    logger.info(f"Retrieved {len(tools)} tools from Lambda")
-                    return tools
+                           logger.info(f"Retrieved {len(tools)} tools from API Gateway")
+                           return tools
                 else:
                     logger.error(f"Error in Lambda response: {result}")
                     return []
@@ -102,15 +102,15 @@ async def list_tools() -> List[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
-    """Call a tool on the Lambda function."""
-    if not LAMBDA_URL:
-        logger.error("MCP_SERVER_URL not configured")
-        return [TextContent(type="text", text="Error: MCP_SERVER_URL not configured")]
+    """Call a tool on the API Gateway."""
+    if not API_GATEWAY_URL:
+        logger.error("API_GATEWAY_URL not configured")
+        return [TextContent(type="text", text="Error: API_GATEWAY_URL not configured")]
     
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                LAMBDA_URL,
+                API_GATEWAY_URL,
                 json={
                     "jsonrpc": "2.0",
                     "id": 2,
