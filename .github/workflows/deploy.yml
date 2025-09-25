@@ -216,12 +216,22 @@ jobs:
                 ]
               }' \
               --query 'Policy.Arn' \
-              --output text) || echo "Policy may already exist"
+              --output text 2>/dev/null)
             
-            # Attach policy to the Lambda execution role
-            aws iam attach-role-policy \
-              --role-name mini-mcp-server-role \
-              --policy-arn $POLICY_ARN || echo "Policy may already be attached"
+            # If policy creation failed, get existing policy ARN
+            if [ -z "$POLICY_ARN" ]; then
+              echo "Policy already exists, getting existing policy ARN..."
+              POLICY_ARN=$(aws iam get-policy --policy-arn "arn:aws:iam::$ACCOUNT_ID:policy/mcp-server-api-policy" --query 'Policy.Arn' --output text 2>/dev/null)
+            fi
+            
+            # Attach policy to the Lambda execution role if we have a valid ARN
+            if [ ! -z "$POLICY_ARN" ]; then
+              aws iam attach-role-policy \
+                --role-name mini-mcp-server-role \
+                --policy-arn $POLICY_ARN || echo "Policy may already be attached"
+            else
+              echo "Warning: Could not create or find policy ARN"
+            fi
             
             # Store API Gateway info for reference
             echo "API_GATEWAY_ID=$API_ID" >> $GITHUB_ENV
