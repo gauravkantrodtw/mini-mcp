@@ -60,6 +60,17 @@ uv run test_proxy.py
 # Or upload mcp-server-deployment.zip to AWS Lambda
 ```
 
+### Cleanup
+
+```bash
+# Local cleanup (requires confirmation)
+./cleanup.sh
+
+# GitHub Actions cleanup (manual trigger with confirmation)
+# Go to Actions → Cleanup AWS Resources → Run workflow
+# Type "DELETE" when prompted
+```
+
 ### Cursor Integration
 
 The MCP proxy automatically connects to your deployed server using the configured URL.

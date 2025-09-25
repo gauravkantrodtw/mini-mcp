@@ -1,0 +1,102 @@
+name: Cleanup AWS Resources
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_deletion:
+        description: 'Type "DELETE" to confirm resource deletion'
+        required: true
+        default: ''
+        type: string
+
+env:
+  AWS_REGION: eu-central-1
+  FUNCTION_NAME: mcp-server
+  API_GATEWAY_NAME: mcp-server-api
+  ROLE_NAME: mcp-server-role
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm_deletion }}" != "DELETE" ]; then
+            echo "❌ Deletion not confirmed. Please type 'DELETE' to confirm."
+            exit 1
+          fi
+          echo "✅ Deletion confirmed. Proceeding with cleanup..."
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Delete Lambda Function
+        run: |
+          echo "🗑️ Deleting Lambda function: ${{ env.FUNCTION_NAME }}"
+          if aws lambda get-function --function-name ${{ env.FUNCTION_NAME }} >/dev/null 2>&1; then
+            aws lambda delete-function --function-name ${{ env.FUNCTION_NAME }}
+            echo "✅ Lambda function deleted successfully"
+          else
+            echo "ℹ️ Lambda function not found, skipping..."
+          fi
+
+      - name: Delete API Gateway
+        run: |
+          echo "🗑️ Deleting API Gateway: ${{ env.API_GATEWAY_NAME }}"
+          API_ID=$(aws apigateway get-rest-apis --query 'items[?name==`${{ env.API_GATEWAY_NAME }}`].[id]' --output text | head -1)
+          
+          if [ ! -z "$API_ID" ] && [ "$API_ID" != "None" ]; then
+            aws apigateway delete-rest-api --rest-api-id $API_ID
+            echo "✅ API Gateway deleted successfully (ID: $API_ID)"
+          else
+            echo "ℹ️ API Gateway not found, skipping..."
+          fi
+
+      - name: Detach IAM Role Policies
+        run: |
+          echo "🔓 Detaching IAM role policies: ${{ env.ROLE_NAME }}"
+          if aws iam get-role --role-name ${{ env.ROLE_NAME }} >/dev/null 2>&1; then
+            # Detach basic execution role
+            aws iam detach-role-policy \
+              --role-name ${{ env.ROLE_NAME }} \
+              --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole || echo "Basic execution policy not attached"
+            
+            # Detach S3 read-only access
+            aws iam detach-role-policy \
+              --role-name ${{ env.ROLE_NAME }} \
+              --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess || echo "S3 read-only policy not attached"
+            
+            echo "✅ IAM role policies detached"
+          else
+            echo "ℹ️ IAM role not found, skipping policy detachment..."
+          fi
+
+      - name: Delete IAM Role
+        run: |
+          echo "🗑️ Deleting IAM role: ${{ env.ROLE_NAME }}"
+          if aws iam get-role --role-name ${{ env.ROLE_NAME }} >/dev/null 2>&1; then
+            aws iam delete-role --role-name ${{ env.ROLE_NAME }}
+            echo "✅ IAM role deleted successfully"
+          else
+            echo "ℹ️ IAM role not found, skipping..."
+          fi
+
+      - name: Cleanup Summary
+        run: |
+          echo "🎉 Cleanup completed!"
+          echo "📋 Resources cleaned up:"
+          echo "   - Lambda Function: ${{ env.FUNCTION_NAME }}"
+          echo "   - API Gateway: ${{ env.API_GATEWAY_NAME }}"
+          echo "   - IAM Role: ${{ env.ROLE_NAME }}"
+          echo ""
+          echo "💡 To redeploy, run the main deployment workflow or use:"
+          echo "   ./create_deployment_package.sh && aws lambda create-function ..."
