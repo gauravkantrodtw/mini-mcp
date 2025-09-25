@@ -220,7 +220,7 @@ jobs:
             
             # Attach policy to the Lambda execution role
             aws iam attach-role-policy \
-              --role-name mcp-server-role \
+              --role-name mini-mcp-server-role \
               --policy-arn $POLICY_ARN || echo "Policy may already be attached"
             
             # Store API Gateway info for reference
@@ -282,6 +282,16 @@ jobs:
 
           # Test MCP endpoint with retry (using IAM authentication)
           echo "Testing MCP endpoint with IAM authentication..."
+          
+          # Get MCP resource ID
+          MCP_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query 'items[?pathPart==`mcp`].[id]' --output text | head -1)
+          
+          if [ -z "$MCP_ID" ]; then
+            echo "❌ MCP resource not found in API Gateway"
+            exit 1
+          fi
+          
+          echo "Found MCP resource ID: $MCP_ID"
           
           # Create test payload
           cat > test-mcp-payload.json << 'EOF'
