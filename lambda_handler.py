@@ -3,12 +3,17 @@
 AWS Lambda entrypoint for the MCP server.
 """
 
+import json
 import logging
 import time
-import json
 from mangum import Mangum
+from starlette.applications import Starlette
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+
 from server import mcp
 import tools.csv_tools  # auto-registers all MCP tools
+import tools.additional_tools  # auto-registers additional MCP tools
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -17,12 +22,9 @@ logger.setLevel(logging.INFO)
 _handler = None
 
 async def handle_mcp_request(request_body: str) -> dict:
-    """Handle MCP request directly without streamable HTTP manager"""
+    """Handle MCP request and return JSON-RPC response."""
     try:
-        # Parse the JSON-RPC request
         request_data = json.loads(request_body)
-        
-        # Handle different MCP methods
         method = request_data.get("method")
         params = request_data.get("params", {})
         request_id = request_data.get("id")
@@ -32,27 +34,16 @@ async def handle_mcp_request(request_body: str) -> dict:
         if method == "tools/list":
             tools_list = await mcp.list_tools()
             result = [{"name": tool.name, "description": tool.description} for tool in tools_list]
-            logger.info(f"Listed {len(result)} tools")
         elif method == "tools/call":
             tool_name = params.get("name")
             tool_args = params.get("arguments", {})
-            logger.info(f"Calling tool: {tool_name} with args: {tool_args}")
             tool_result = await mcp.call_tool(tool_name, tool_args)
-            # Convert MCP result to JSON-serializable format
-            if hasattr(tool_result, 'content'):
-                result = tool_result.content
-            else:
-                result = str(tool_result)
-            logger.info(f"Tool {tool_name} completed successfully")
+            result = tool_result.content if hasattr(tool_result, 'content') else str(tool_result)
         else:
-            logger.warning(f"Unknown method: {method}")
             result = {"error": f"Unknown method: {method}"}
         
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": result
-        }
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+        
     except Exception as e:
         logger.error(f"Error handling MCP request: {e}", exc_info=True)
         return {
@@ -63,18 +54,12 @@ async def handle_mcp_request(request_body: str) -> dict:
 
 
 def get_handler():
-    """Get or create a custom handler that bypasses streamable HTTP manager"""
+    """Get or create ASGI handler for Lambda."""
     global _handler
     if _handler is None:
-        # Create a simple ASGI app that handles MCP requests
-        from starlette.applications import Starlette
-        from starlette.responses import JSONResponse
-        from starlette.routing import Route
-        
         async def mcp_endpoint(request):
             body = await request.body()
-            result = await handle_mcp_request(body.decode())
-            return JSONResponse(result)
+            return JSONResponse(await handle_mcp_request(body.decode()))
         
         async def health_endpoint(request):
             return JSONResponse({
@@ -89,15 +74,14 @@ def get_handler():
         ])
 
         _handler = Mangum(app, lifespan="off")
-        logger.info("Lambda handler initialized successfully")
+        logger.info("Lambda handler initialized")
     return _handler
 
 def lambda_handler(event, context):
-    """Lambda handler function"""
+    """AWS Lambda handler function."""
     start_time = time.time()
     try:
-        handler = get_handler()
-        response = handler(event, context)
+        response = get_handler()(event, context)
         logger.info("Processed request in %.3fs", time.time() - start_time)
         return response
     except Exception as e:
@@ -114,27 +98,22 @@ if __name__ == "__main__":
         "version": "2.0",
         "routeKey": "POST /mcp",
         "rawPath": "/mcp",
-        "rawQueryString": "",
-        "headers": {
-            "content-type": "application/json",
-            "host": "localhost"
-        },
+        "headers": {"content-type": "application/json"},
         "requestContext": {
             "http": {
-                "method": "POST",
-                "path": "/mcp",
+                "method": "POST", 
+                "path": "/mcp", 
                 "protocol": "HTTP/1.1",
-                "sourceIp": "127.0.0.1",
-                "userAgent": "test-agent"
+                "sourceIp": "127.0.0.1"
             },
-            "requestId": "test-request-id",
-            "accountId": "123456789012",
-            "apiId": "test-api-id",
-            "stage": "test"
+            "requestId": "test-request-id"
         },
         "body": '{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}',
         "isBase64Encoded": False,
     }
 
+    print("Testing Lambda handler locally...")
     result = lambda_handler(test_event, None)
-    print(result)
+    print("Response:")
+    print(json.dumps(result, indent=2))
+
