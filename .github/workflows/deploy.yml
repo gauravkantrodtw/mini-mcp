@@ -179,7 +179,7 @@ jobs:
             
             # Create /mcp endpoint
             MCP_ID=$(aws apigateway create-resource --rest-api-id $API_ID --parent-id $ROOT_ID --path-part mcp --query 'id' --output text)
-            aws apigateway put-method --rest-api-id $API_ID --resource-id $MCP_ID --http-method POST --authorization-type NONE
+            aws apigateway put-method --rest-api-id $API_ID --resource-id $MCP_ID --http-method POST --authorization-type AWS_IAM
             
             # Get Lambda function ARN
             LAMBDA_ARN=$(aws lambda get-function --function-name ${{ env.FUNCTION_NAME }} --query 'Configuration.FunctionArn' --output text)
@@ -201,6 +201,31 @@ jobs:
               --action lambda:InvokeFunction \
               --principal apigateway.amazonaws.com \
               --source-arn "arn:aws:execute-api:${{ env.AWS_REGION }}:$ACCOUNT_ID:$API_ID/*/POST/mcp" || echo "Permission may already exist, continuing..."
+            
+            # Create IAM policy for API Gateway access
+            POLICY_ARN=$(aws iam create-policy \
+              --policy-name mcp-server-api-policy \
+              --policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Action": "execute-api:Invoke",
+                    "Resource": "arn:aws:execute-api:'${{ env.AWS_REGION }}':*:'$API_ID'/*/POST/mcp"
+                  }
+                ]
+              }' \
+              --query 'Policy.Arn' \
+              --output text) || echo "Policy may already exist"
+            
+            # Attach policy to the Lambda execution role
+            aws iam attach-role-policy \
+              --role-name mcp-server-role \
+              --policy-arn $POLICY_ARN || echo "Policy may already be attached"
+            
+            # Store API Gateway info for reference
+            echo "API_GATEWAY_ID=$API_ID" >> $GITHUB_ENV
+            echo "API_GATEWAY_URL=https://$API_ID.execute-api.${{ env.AWS_REGION }}.amazonaws.com/prod" >> $GITHUB_ENV
           else
             echo "Using existing API Gateway: $API_ID"
             
@@ -211,8 +236,9 @@ jobs:
             MCP_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query 'items[?pathPart==`mcp`].[id]' --output text | head -1)
             
             if [ ! -z "$MCP_ID" ]; then
-              # Update integration
+              # Update integration and set IAM authorization
               aws apigateway put-integration --rest-api-id $API_ID --resource-id $MCP_ID --http-method POST --type AWS_PROXY --integration-http-method POST --uri "arn:aws:apigateway:${{ env.AWS_REGION }}:lambda:path/2015-03-31/functions/$LAMBDA_ARN/invocations"
+              aws apigateway update-method --rest-api-id $API_ID --resource-id $MCP_ID --http-method POST --patch-ops op=replace,path=/authorizationType,value=AWS_IAM
             fi
             
             # Redeploy to update the integration
@@ -254,17 +280,36 @@ jobs:
             fi
           done
 
-          # Test MCP endpoint with retry
-          echo "Testing MCP endpoint..."
+          # Test MCP endpoint with retry (using IAM authentication)
+          echo "Testing MCP endpoint with IAM authentication..."
+          
+          # Create test payload
+          cat > test-mcp-payload.json << 'EOF'
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+            "params": {}
+          }
+          EOF
+          
+          # Test using AWS CLI with IAM authentication
           for i in {1..3}; do
-            if curl -X POST "$API_URL/mcp" \
-              -H "Content-Type: application/json" \
-              -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}' \
-              --max-time 30; then
+            echo "Test attempt $i..."
+            if aws apigateway test-invoke-method \
+              --rest-api-id $API_ID \
+              --resource-id $MCP_ID \
+              --http-method POST \
+              --body file://test-mcp-payload.json \
+              --headers 'Content-Type=application/json' > test-response.json; then
               echo "MCP test passed!"
+              cat test-response.json
               break
             else
               echo "MCP test attempt $i failed, retrying..."
               sleep 10
             fi
           done
+          
+          # Clean up
+          rm -f test-mcp-payload.json test-response.json

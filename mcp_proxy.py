@@ -9,6 +9,9 @@ import os
 from typing import Any, Dict, List
 
 import httpx
+import boto3
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
@@ -19,6 +22,49 @@ logger = logging.getLogger(__name__)
 
 # Configurable API Gateway URL
 API_GATEWAY_URL = os.getenv("API_GATEWAY_URL")
+AWS_REGION = os.getenv("AWS_REGION", "eu-central-1")
+
+# AWS credentials for IAM authentication
+def get_aws_session():
+    """Get AWS session with profile support."""
+    profile = os.getenv("AWS_PROFILE")
+    region = os.getenv("AWS_REGION", "eu-central-1")
+    
+    if profile:
+        return boto3.Session(profile_name=profile, region_name=region)
+    else:
+        return boto3.Session(region_name=region)
+
+aws_session = get_aws_session()
+credentials = aws_session.get_credentials()
+
+if not credentials:
+    logger.error("No AWS credentials found. Please configure AWS credentials or set AWS_PROFILE.")
+
+def sign_request(url: str, method: str, headers: Dict[str, str], body: str) -> Dict[str, str]:
+    """Sign HTTP request with AWS IAM credentials for API Gateway."""
+    try:
+        # Parse URL to get host and path
+        from urllib.parse import urlparse
+        parsed_url = urlparse(url)
+        
+        # Create AWS request
+        aws_request = AWSRequest(
+            method=method,
+            url=url,
+            data=body.encode('utf-8') if body else None,
+            headers=headers
+        )
+        
+        # Sign the request
+        region = aws_session.region_name or AWS_REGION
+        SigV4Auth(credentials, 'execute-api', region).add_auth(aws_request)
+        
+        # Return signed headers
+        return dict(aws_request.headers)
+    except Exception as e:
+        logger.error(f"Failed to sign request: {e}")
+        return headers
 
 def extract_schema_from_description(tool_data):
     """Extract input schema from tool description."""
@@ -69,11 +115,20 @@ async def list_tools() -> List[Tool]:
         return []
     
     try:
+        # Prepare request data
+        request_data = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+        import json
+        body = json.dumps(request_data)
+        headers = {"Content-Type": "application/json"}
+        
+        # Sign request with AWS IAM credentials
+        signed_headers = sign_request(API_GATEWAY_URL, "POST", headers, body)
+        
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 API_GATEWAY_URL,
-                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
-                headers={"Content-Type": "application/json"},
+                json=request_data,
+                headers=signed_headers,
                 timeout=30.0
             )
             
@@ -108,16 +163,25 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
         return [TextContent(type="text", text="Error: API_GATEWAY_URL not configured")]
     
     try:
+        # Prepare request data
+        request_data = {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments}
+        }
+        import json
+        body = json.dumps(request_data)
+        headers = {"Content-Type": "application/json"}
+        
+        # Sign request with AWS IAM credentials
+        signed_headers = sign_request(API_GATEWAY_URL, "POST", headers, body)
+        
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 API_GATEWAY_URL,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 2,
-                    "method": "tools/call",
-                    "params": {"name": name, "arguments": arguments}
-                },
-                headers={"Content-Type": "application/json"},
+                json=request_data,
+                headers=signed_headers,
                 timeout=30.0
             )
             
