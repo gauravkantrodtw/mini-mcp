@@ -6,7 +6,7 @@ on:
     branches: [ main ]
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: eu-central-1
   FUNCTION_NAME: mini-mcp-server
   LAMBDA_ARCHITECTURE: x86_64  # Change to arm64 if you want ARM64 Lambda
 
