@@ -29,6 +29,15 @@ A lightweight MCP (Model Context Protocol) server for CSV analysis, deployable t
    MCP_SERVER_URL=https://your-api-gateway-id.execute-api.eu-central-1.amazonaws.com/prod/mcp
    ```
 
+### Centralized Configuration
+
+All deployment scripts use centralized configuration from `config.env`:
+
+- `FUNCTION_NAME`: Lambda function name
+- `API_GATEWAY_NAME`: API Gateway name
+- `AWS_REGION`: AWS region
+- `MCP_SERVER_URL`: MCP server endpoint URL
+
 ## Usage
 
 ### Local Testing
