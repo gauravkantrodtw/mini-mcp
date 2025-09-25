@@ -88,8 +88,8 @@ async def list_tools() -> List[Tool]:
                         )
                         for tool_data in result["result"]
                     ]
-                           logger.info(f"Retrieved {len(tools)} tools from API Gateway")
-                           return tools
+                    logger.info(f"Retrieved {len(tools)} tools from API Gateway")
+                    return tools
                 else:
                     logger.error(f"Error in Lambda response: {result}")
                     return []
@@ -139,12 +139,16 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
 
 async def main():
     """Main entry point."""
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options()
-        )
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                server.create_initialization_options()
+            )
+    except Exception as e:
+        logger.error(f"MCP server error: {e}")
+        raise
 
 if __name__ == "__main__":
     asyncio.run(main())
