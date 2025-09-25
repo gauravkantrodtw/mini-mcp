@@ -8,7 +8,7 @@ import logging
 import os
 from typing import Any, Dict, List
 
-import httpx
+import requests
 import boto3
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
@@ -124,33 +124,33 @@ async def list_tools() -> List[Tool]:
         # Sign request with AWS IAM credentials
         signed_headers = sign_request(API_GATEWAY_URL, "POST", headers, body)
         
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                API_GATEWAY_URL,
-                json=request_data,
-                headers=signed_headers,
-                timeout=30.0
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                if "result" in result:
-                    tools = [
-                        Tool(
-                            name=tool_data["name"],
-                            description=tool_data["description"],
-                            inputSchema=extract_schema_from_description(tool_data)
-                        )
-                        for tool_data in result["result"]
-                    ]
-                    logger.info(f"Retrieved {len(tools)} tools from API Gateway")
-                    return tools
-                else:
-                    logger.error(f"Error in Lambda response: {result}")
-                    return []
+        # Use requests for AWS signed requests
+        response = requests.post(
+            API_GATEWAY_URL,
+            data=body,
+            headers=signed_headers,
+            timeout=30.0
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if "result" in result:
+                tools = [
+                    Tool(
+                        name=tool_data["name"],
+                        description=tool_data["description"],
+                        inputSchema=extract_schema_from_description(tool_data)
+                    )
+                    for tool_data in result["result"]
+                ]
+                logger.info(f"Retrieved {len(tools)} tools from API Gateway")
+                return tools
             else:
-                logger.error(f"HTTP error: {response.status_code}")
+                logger.error(f"Error in Lambda response: {result}")
                 return []
+        else:
+            logger.error(f"HTTP error: {response.status_code}")
+            return []
     except Exception as e:
         logger.error(f"Error listing tools: {e}")
         return []
@@ -177,26 +177,26 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
         # Sign request with AWS IAM credentials
         signed_headers = sign_request(API_GATEWAY_URL, "POST", headers, body)
         
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                API_GATEWAY_URL,
-                json=request_data,
-                headers=signed_headers,
-                timeout=30.0
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                if "result" in result:
-                    logger.info(f"Tool {name} executed successfully")
-                    return [TextContent(type="text", text=str(result["result"]))]
-                else:
-                    error_msg = result.get("error", "Unknown error")
-                    logger.error(f"Tool execution error: {error_msg}")
-                    return [TextContent(type="text", text=f"Error: {error_msg}")]
+        # Use requests for AWS signed requests
+        response = requests.post(
+            API_GATEWAY_URL,
+            data=body,
+            headers=signed_headers,
+            timeout=30.0
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if "result" in result:
+                logger.info(f"Tool {name} executed successfully")
+                return [TextContent(type="text", text=str(result["result"]))]
             else:
-                logger.error(f"HTTP error: {response.status_code}")
-                return [TextContent(type="text", text=f"HTTP error: {response.status_code}")]
+                error_msg = result.get("error", "Unknown error")
+                logger.error(f"Tool execution error: {error_msg}")
+                return [TextContent(type="text", text=f"Error: {error_msg}")]
+        else:
+            logger.error(f"HTTP error: {response.status_code}")
+            return [TextContent(type="text", text=f"HTTP error: {response.status_code}")]
     except Exception as e:
         logger.error(f"Error calling tool {name}: {e}")
         return [TextContent(type="text", text=f"Error: {str(e)}")]
