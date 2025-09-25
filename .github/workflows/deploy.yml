@@ -2,8 +2,6 @@ name: Deploy MCP Server to AWS Lambda
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
   pull_request:
     branches: [ main ]
 
