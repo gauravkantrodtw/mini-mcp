@@ -263,6 +263,15 @@ jobs:
               --principal apigateway.amazonaws.com \
               --source-arn "arn:aws:execute-api:${{ env.AWS_REGION }}:$ACCOUNT_ID:$API_ID/*/${{ env.HTTP_METHOD }}${{ env.MCP_ENDPOINT_PATH }}" || echo "Permission may already exist, continuing..."
             
+            # Add permission for the /health endpoint
+            HEALTH_STATEMENT_ID="apigateway-invoke-health-$(date +%s)"
+            aws lambda add-permission \
+              --function-name ${{ env.FUNCTION_NAME }} \
+              --statement-id $HEALTH_STATEMENT_ID \
+              --action lambda:InvokeFunction \
+              --principal apigateway.amazonaws.com \
+              --source-arn "arn:aws:execute-api:${{ env.AWS_REGION }}:$ACCOUNT_ID:$API_ID/*/GET${{ env.HEALTH_ENDPOINT_PATH }}" || echo "Health permission may already exist, continuing..."
+            
             # Create IAM policy for API Gateway access
             POLICY_ARN=$(aws iam create-policy \
               --policy-name ${{ env.API_POLICY_NAME }} \
@@ -325,6 +334,15 @@ jobs:
               echo "Updating existing /health endpoint..."
               aws apigateway put-integration --rest-api-id $API_ID --resource-id $HEALTH_ID --http-method GET --type ${{ env.INTEGRATION_TYPE }} --integration-http-method ${{ env.HTTP_METHOD }} --uri "arn:aws:apigateway:${{ env.AWS_REGION }}:lambda:path/2015-03-31/functions/$LAMBDA_ARN/invocations"
             fi
+            
+            # Ensure health endpoint has Lambda permission
+            HEALTH_STATEMENT_ID="apigateway-invoke-health-$(date +%s)"
+            aws lambda add-permission \
+              --function-name ${{ env.FUNCTION_NAME }} \
+              --statement-id $HEALTH_STATEMENT_ID \
+              --action lambda:InvokeFunction \
+              --principal apigateway.amazonaws.com \
+              --source-arn "arn:aws:execute-api:${{ env.AWS_REGION }}:$ACCOUNT_ID:$API_ID/*/GET${{ env.HEALTH_ENDPOINT_PATH }}" || echo "Health permission may already exist, continuing..."
             
             # Redeploy to update the integration
             aws apigateway create-deployment --rest-api-id $API_ID --stage-name ${{ env.API_STAGE_NAME }}
