@@ -1,13 +1,28 @@
 import logging
 import pandas as pd
 import boto3
+from botocore.config import Config
 from io import BytesIO
 from typing import Dict, Any, List
+import os
 
 logger = logging.getLogger(__name__)
 
-# Global S3 client
-s3_client = boto3.client("s3")
+# Cold start optimization: Create optimized S3 client at module level
+# This ensures the client is initialized once per Lambda container
+s3_client = boto3.client(
+    "s3",
+    config=Config(
+        # Connection pooling for better performance
+        max_pool_connections=50,
+        # Retry configuration
+        retries={'max_attempts': 3, 'mode': 'adaptive'},
+        # Keep-alive for persistent connections
+        tcp_keepalive=True,
+        # Region configuration from environment
+        region_name=os.getenv("AWS_REGION", "eu-central-1")
+    )
+)
 
 
 def read_s3_csv_chunk(bucket_name: str, file_key: str, chunk_size: int = 1000) -> pd.DataFrame:

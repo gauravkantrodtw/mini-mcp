@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 AWS Lambda entrypoint for the MCP server.
+Optimized for cold start performance.
 """
 
 import json
@@ -11,11 +12,14 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+# Cold start optimization: Import heavy modules at module level
+# This ensures they're loaded during container initialization, not on first request
 from server import mcp
 import tools.csv_tools  # auto-registers all MCP tools
 import tools.additional_tools  # auto-registers additional MCP tools
 import tools.s3_csv_tools  # auto-registers S3 CSV tools
 
+# Configure logging once at module level
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 

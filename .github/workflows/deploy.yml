@@ -67,14 +67,47 @@ jobs:
                 ]
               }' || echo "Role may already exist"
             
-            # Attach policies
+            # Attach basic execution policy
             aws iam attach-role-policy \
               --role-name mini-mcp-server-role \
               --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole || true
             
-            aws iam attach-role-policy \
-              --role-name mini-mcp-server-role \
-              --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess || true
+            # Create least privilege S3 policy for specific bucket
+            S3_POLICY_ARN=$(aws iam create-policy \
+              --policy-name mcp-server-s3-policy \
+              --policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Action": [
+                      "s3:GetObject",
+                      "s3:ListBucket"
+                    ],
+                    "Resource": [
+                      "arn:aws:s3:::databricks-dev-external-ext-str-raw-data-eu-central-1",
+                      "arn:aws:s3:::databricks-dev-external-ext-str-raw-data-eu-central-1/*"
+                    ]
+                  }
+                ]
+              }' \
+              --query 'Policy.Arn' \
+              --output text 2>/dev/null)
+            
+            # If S3 policy creation failed, get existing policy ARN
+            if [ -z "$S3_POLICY_ARN" ]; then
+              echo "S3 policy already exists, getting existing policy ARN..."
+              S3_POLICY_ARN=$(aws iam get-policy --policy-arn "arn:aws:iam::$ACCOUNT_ID:policy/mcp-server-s3-policy" --query 'Policy.Arn' --output text 2>/dev/null)
+            fi
+            
+            # Attach S3 policy to the Lambda execution role if we have a valid ARN
+            if [ ! -z "$S3_POLICY_ARN" ]; then
+              aws iam attach-role-policy \
+                --role-name mini-mcp-server-role \
+                --policy-arn $S3_POLICY_ARN || echo "S3 policy may already be attached"
+            else
+              echo "Warning: Could not create or find S3 policy ARN"
+            fi
             
             # Wait for role to be ready
             sleep 10
@@ -90,8 +123,8 @@ jobs:
               --handler lambda_handler.lambda_handler \
               --zip-file fileb://mcp-server-deployment.zip \
               --architecture ${{ env.LAMBDA_ARCHITECTURE }} \
-              --memory-size 512 \
-              --timeout 30
+              --memory-size 1024 \
+              --timeout 120
           fi
 
       - name: Wait for Lambda to be ready
@@ -114,6 +147,7 @@ jobs:
             echo "Function did not become active within 5 minutes"
             exit 1
           fi
+
 
       - name: Test deployment
         run: |

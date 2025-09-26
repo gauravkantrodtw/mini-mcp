@@ -15,6 +15,7 @@ env:
   API_GATEWAY_NAME: mcp-server-api
   ROLE_NAME: mini-mcp-server-role
   POLICY_NAME: mcp-server-api-policy
+  S3_POLICY_NAME: mcp-server-s3-policy
 
 jobs:
   cleanup:
@@ -39,6 +40,27 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: Delete Lambda Permissions
+        run: |
+          echo "🗑️ Deleting Lambda permissions for: ${{ env.FUNCTION_NAME }}"
+          if aws lambda get-function --function-name ${{ env.FUNCTION_NAME }} >/dev/null 2>&1; then
+            # Get all policy statements and remove API Gateway permissions
+            POLICY=$(aws lambda get-policy --function-name ${{ env.FUNCTION_NAME }} --query 'Policy' --output text 2>/dev/null || echo '{}')
+            if [ "$POLICY" != "{}" ]; then
+              echo "$POLICY" | jq -r '.Statement[] | select(.Principal.Service == "apigateway.amazonaws.com") | .Sid' | while read statement_id; do
+                if [ ! -z "$statement_id" ]; then
+                  echo "Removing permission: $statement_id"
+                  aws lambda remove-permission --function-name ${{ env.FUNCTION_NAME }} --statement-id "$statement_id" || echo "Permission $statement_id not found"
+                fi
+              done
+              echo "✅ Lambda permissions cleaned up"
+            else
+              echo "ℹ️ No Lambda permissions found"
+            fi
+          else
+            echo "ℹ️ Lambda function not found, skipping permissions cleanup..."
+          fi
 
       - name: Delete Lambda Function
         run: |
@@ -74,10 +96,10 @@ jobs:
               --role-name ${{ env.ROLE_NAME }} \
               --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole || echo "Basic execution policy not attached"
             
-            # Detach S3 read-only access
+            # Detach custom S3 policy
             aws iam detach-role-policy \
               --role-name ${{ env.ROLE_NAME }} \
-              --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess || echo "S3 read-only policy not attached"
+              --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/${{ env.S3_POLICY_NAME }} || echo "S3 policy not attached"
             
             # Detach custom API Gateway policy
             aws iam detach-role-policy \
@@ -120,14 +142,37 @@ jobs:
             echo "ℹ️ IAM policy not found, skipping..."
           fi
 
+      - name: Delete S3 IAM Policy
+        run: |
+          echo "🗑️ Deleting S3 IAM policy: ${{ env.S3_POLICY_NAME }}"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          S3_POLICY_ARN="arn:aws:iam::$ACCOUNT_ID:policy/${{ env.S3_POLICY_NAME }}"
+          
+          if aws iam get-policy --policy-arn $S3_POLICY_ARN >/dev/null 2>&1; then
+            # Delete all policy versions first
+            aws iam list-policy-versions --policy-arn $S3_POLICY_ARN --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text | tr '\t' '\n' | while read version; do
+              if [ ! -z "$version" ]; then
+                aws iam delete-policy-version --policy-arn $S3_POLICY_ARN --version-id $version || echo "Failed to delete version $version"
+              fi
+            done
+            
+            # Delete the policy
+            aws iam delete-policy --policy-arn $S3_POLICY_ARN
+            echo "✅ S3 IAM policy deleted successfully"
+          else
+            echo "ℹ️ S3 IAM policy not found, skipping..."
+          fi
+
       - name: Cleanup Summary
         run: |
           echo "🎉 Cleanup completed!"
           echo "📋 Resources cleaned up:"
           echo "   - Lambda Function: ${{ env.FUNCTION_NAME }}"
+          echo "   - Lambda Permissions: API Gateway invoke permissions"
           echo "   - API Gateway: ${{ env.API_GATEWAY_NAME }}"
           echo "   - IAM Role: ${{ env.ROLE_NAME }}"
           echo "   - IAM Policy: ${{ env.POLICY_NAME }}"
+          echo "   - S3 IAM Policy: ${{ env.S3_POLICY_NAME }}"
           echo ""
           echo "💡 To redeploy, run the main deployment workflow or use:"
           echo "   ./create_deployment_package.sh && aws lambda create-function ..."
