@@ -65,9 +65,9 @@ graph TB
 - **Data Protection**: No persistent storage of sensitive data
 
 ### Tool Architecture
-- **Local Tools**: `csv_tools.py` for local file analysis
-- **S3 Tools**: `s3_csv_tools.py` for cloud CSV processing
-- **Auto-registration**: `tools/__init__.py` for automatic tool discovery
+- **Local Tools**: CSV File analysis capabilities for local data sources
+- **Cloud Tools**: Processing capabilities for cloud data sources
+- **Auto-registration**: Automatic tool discovery via module initialization
 - **Modular Design**: Easy addition of new tools without code changes
 
 ### Performance Optimizations
@@ -112,23 +112,6 @@ graph TB
 - **Cleanup**: Automated resource cleanup via GitHub Actions workflow
 
 ## Implementation Details
-
-### File Structure
-```
-├── lambda_handler.py          # AWS Lambda entry point
-├── mcp_proxy.py              # MCP proxy for Cursor
-├── server.py                 # MCP server configuration
-├── tools/
-│   ├── __init__.py           # Auto-registers all tools
-│   ├── csv_tools.py          # Local CSV analysis tools
-│   └── s3_csv_tools.py       # S3 CSV analysis tools
-├── utils/
-│   ├── file_reader.py        # Local file utilities
-│   └── s3_csv_processor.py   # S3 CSV processing utilities
-└── .github/workflows/
-    ├── deploy.yml            # Deployment automation
-    └── cleanup.yml           # Resource cleanup
-```
 
 ### Security Configuration
 - **API Gateway**: IAM authorization for all endpoints
