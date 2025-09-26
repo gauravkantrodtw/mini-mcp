@@ -238,7 +238,7 @@ jobs:
             
             # Configure methods
             aws apigateway put-method --rest-api-id $API_ID --resource-id $MCP_ID --http-method ${{ env.HTTP_METHOD }} --authorization-type ${{ env.AUTHORIZATION_TYPE }}
-            aws apigateway put-method --rest-api-id $API_ID --resource-id $HEALTH_ID --http-method GET --authorization-type NONE
+            aws apigateway put-method --rest-api-id $API_ID --resource-id $HEALTH_ID --http-method GET --authorization-type ${{ env.AUTHORIZATION_TYPE }}
             
             # Configure integrations
             aws apigateway put-integration --rest-api-id $API_ID --resource-id $MCP_ID --http-method ${{ env.HTTP_METHOD }} --type ${{ env.INTEGRATION_TYPE }} --integration-http-method ${{ env.HTTP_METHOD }} --uri "arn:aws:apigateway:${{ env.AWS_REGION }}:lambda:path/2015-03-31/functions/$LAMBDA_ARN/invocations"
@@ -274,7 +274,10 @@ jobs:
                   {
                     "Effect": "Allow",
                     "Action": "execute-api:Invoke",
-                    "Resource": "arn:aws:execute-api:'${{ env.AWS_REGION }}':*:'$API_ID'/*/${{ env.HTTP_METHOD }}${{ env.MCP_ENDPOINT_PATH }}"
+                    "Resource": [
+                      "arn:aws:execute-api:'${{ env.AWS_REGION }}':*:'$API_ID'/*/${{ env.HTTP_METHOD }}${{ env.MCP_ENDPOINT_PATH }}",
+                      "arn:aws:execute-api:'${{ env.AWS_REGION }}':*:'$API_ID'/*/GET${{ env.HEALTH_ENDPOINT_PATH }}"
+                    ]
                   }
                 ]
               }' \
@@ -314,7 +317,7 @@ jobs:
             if [ -z "$HEALTH_ID" ]; then
               echo "Creating missing /health endpoint..."
               HEALTH_ID=$(aws apigateway create-resource --rest-api-id $API_ID --parent-id $ROOT_ID --path-part health --query 'id' --output text)
-              aws apigateway put-method --rest-api-id $API_ID --resource-id $HEALTH_ID --http-method GET --authorization-type NONE
+              aws apigateway put-method --rest-api-id $API_ID --resource-id $HEALTH_ID --http-method GET --authorization-type ${{ env.AUTHORIZATION_TYPE }}
             fi
             
             aws apigateway put-integration --rest-api-id $API_ID --resource-id $HEALTH_ID --http-method GET --type ${{ env.INTEGRATION_TYPE }} --integration-http-method ${{ env.HTTP_METHOD }} --uri "arn:aws:apigateway:${{ env.AWS_REGION }}:lambda:path/2015-03-31/functions/$LAMBDA_ARN/invocations"
@@ -355,14 +358,30 @@ jobs:
           echo "MCP Endpoint: $API_URL${{ env.MCP_ENDPOINT_PATH }}"
           echo "Health Check: $API_URL${{ env.HEALTH_ENDPOINT_PATH }}"
 
-          # Test health endpoint
-          echo "Testing health endpoint..."
+          # Test health endpoint with IAM authentication
+          echo "Testing health endpoint with IAM authentication..."
+          HEALTH_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query 'items[?pathPart==`health`].[id]' --output text | head -1)
+          
+          if [ -z "$HEALTH_ID" ]; then
+            echo "❌ Health resource not found in API Gateway"
+            exit 1
+          fi
+          
+          echo "Found health resource ID: $HEALTH_ID"
+          
+          # Test using AWS CLI with IAM authentication
           for i in {1..3}; do
-            if curl -X GET "$API_URL${{ env.HEALTH_ENDPOINT_PATH }}" --max-time 30; then
-              echo "Health check passed!"
+            echo "Health test attempt $i..."
+            if aws apigateway test-invoke-method \
+              --rest-api-id $API_ID \
+              --resource-id $HEALTH_ID \
+              --http-method GET \
+              --headers 'Content-Type=application/json' > health-response.json; then
+              echo "Health test passed!"
+              cat health-response.json
               break
             else
-              echo "Health check attempt $i failed, retrying..."
+              echo "Health test attempt $i failed, retrying..."
               sleep 10
             fi
           done
@@ -407,4 +426,4 @@ jobs:
           done
           
           # Clean up
-          rm -f test-mcp-payload.json test-response.json
+          rm -f test-mcp-payload.json test-response.json health-response.json
