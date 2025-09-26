@@ -21,6 +21,43 @@ Key requirements:
 - **Storage**: AWS S3 for CSV file storage with least-privilege access
 - **Deployment**: GitHub Actions for CI/CD with automated testing
 
+### Architecture Diagram
+
+```mermaid
+graph TB
+    User[👤 User] --> MCPClient[🔧 MCP Client<br/>Cursor IDE]
+    MCPClient --> |"HTTPS + IAM Auth"| APIGateway[🌐 API Gateway<br/>REST API]
+    APIGateway --> |"Invoke"| Lambda[⚡ AWS Lambda<br/>MCP Server]
+    
+    Lambda --> S3[🗄️ AWS S3<br/>CSV Files]
+    Lambda --> Delta[📊 Databricks<br/>Delta Tables]
+    Lambda --> Local[📁 Local Files<br/>/data directory]
+    
+    subgraph "AWS Cloud"
+        APIGateway
+        Lambda
+        S3
+    end
+    
+    subgraph "External Services"
+        Delta
+    end
+    
+    subgraph "Client Environment"
+        User
+        MCPClient
+        Local
+    end
+    
+    classDef aws fill:#ff9900,stroke:#232f3e,stroke-width:2px,color:#fff
+    classDef external fill:#0066cc,stroke:#003d82,stroke-width:2px,color:#fff
+    classDef client fill:#28a745,stroke:#1e7e34,stroke-width:2px,color:#fff
+    
+    class APIGateway,Lambda,S3 aws
+    class Delta external
+    class User,MCPClient,Local client
+```
+
 ### Security Model
 - **API Authentication**: AWS IAM for both MCP and health endpoints
 - **S3 Access**: Least-privilege IAM policy for specific bucket only
