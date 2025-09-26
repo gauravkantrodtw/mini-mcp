@@ -6,20 +6,20 @@ on:
 
 env:
   AWS_REGION: eu-central-1
-  FUNCTION_NAME: mcp-server
+  FUNCTION_NAME: daap-mcp-server
   LAMBDA_ARCHITECTURE: x86_64  # Change to arm64 if you want ARM64 Lambda
-  API_GATEWAY_NAME: mcp-server-api
+  API_GATEWAY_NAME: daap-mcp-server-api
   
   # IAM Resources
-  ROLE_NAME: mini-mcp-server-role
-  API_POLICY_NAME: mcp-server-api-policy
-  S3_POLICY_NAME: mcp-server-s3-policy
+  ROLE_NAME: daap-mcp-server-role
+  API_POLICY_NAME: daap-mcp-server-api-policy
+  S3_POLICY_NAME: daap-mcp-server-s3-policy
   
   # S3 Configuration
   S3_BUCKET_NAME: databricks-dev-external-ext-str-raw-data-eu-central-1
   
   # API Gateway Configuration
-  API_STAGE_NAME: prod
+  API_STAGE_NAME: dev
   MCP_ENDPOINT_PATH: /mcp
   MCP_ENDPOINT_PATH_PART: mcp
   HEALTH_ENDPOINT_PATH: /health

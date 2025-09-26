@@ -11,13 +11,13 @@ on:
 
 env:
   AWS_REGION: eu-central-1
-  FUNCTION_NAME: mcp-server
-  API_GATEWAY_NAME: mcp-server-api
+  FUNCTION_NAME: daap-mcp-server
+  API_GATEWAY_NAME: daap-mcp-server-api
   
   # IAM Resources
-  ROLE_NAME: mini-mcp-server-role
-  API_POLICY_NAME: mcp-server-api-policy
-  S3_POLICY_NAME: mcp-server-s3-policy
+  ROLE_NAME: daap-mcp-server-role
+  API_POLICY_NAME: daap-mcp-server-api-policy
+  S3_POLICY_NAME: daap-mcp-server-s3-policy
 
 jobs:
   cleanup:
