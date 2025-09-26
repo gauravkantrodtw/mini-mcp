@@ -11,7 +11,7 @@ Key requirements:
 - **Security**: Secure API endpoints with proper authentication and authorization
 - **Cost-effectiveness**: Pay-per-use model with minimal idle costs
 - **Maintainability**: Easy deployment, updates, and monitoring
-- **Integration**: Seamless integration with Cursor IDE via MCP protocol
+- **Integration**: Seamless integration with MCP-compatible clients (Cursor IDE, Claude, etc.)
 
 ## Decision
 
@@ -25,7 +25,7 @@ Key requirements:
 
 ```mermaid
 graph TB
-    User[👤 User] --> MCPClient[🔧 MCP Client<br/>Cursor IDE]
+    User[👤 User] --> MCPClient[🔧 MCP Client<br/>Cursor IDE / Claude]
     MCPClient --> |"HTTPS + IAM Auth"| APIGateway[🌐 API Gateway<br/>REST API]
     APIGateway --> |"Invoke"| Lambda[⚡ AWS Lambda<br/>MCP Server]
     
