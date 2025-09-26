@@ -43,11 +43,16 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Delete Lambda Permissions
+      - name: Cleanup Lambda Resources
         run: |
-          echo "🗑️ Deleting Lambda permissions for: ${{ env.FUNCTION_NAME }}"
+          # Get AWS account ID once
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          
+          echo "🗑️ Cleaning up Lambda resources..."
+          
+          # Delete Lambda permissions
           if aws lambda get-function --function-name ${{ env.FUNCTION_NAME }} >/dev/null 2>&1; then
-            # Get all policy statements and remove API Gateway permissions
+            echo "Deleting Lambda permissions for: ${{ env.FUNCTION_NAME }}"
             POLICY=$(aws lambda get-policy --function-name ${{ env.FUNCTION_NAME }} --query 'Policy' --output text 2>/dev/null || echo '{}')
             if [ "$POLICY" != "{}" ]; then
               echo "$POLICY" | jq -r '.Statement[] | select(.Principal.Service == "apigateway.amazonaws.com") | .Sid' | while read statement_id; do
@@ -60,23 +65,18 @@ jobs:
             else
               echo "ℹ️ No Lambda permissions found"
             fi
-          else
-            echo "ℹ️ Lambda function not found, skipping permissions cleanup..."
-          fi
-
-      - name: Delete Lambda Function
-        run: |
-          echo "🗑️ Deleting Lambda function: ${{ env.FUNCTION_NAME }}"
-          if aws lambda get-function --function-name ${{ env.FUNCTION_NAME }} >/dev/null 2>&1; then
+            
+            # Delete Lambda function
+            echo "Deleting Lambda function: ${{ env.FUNCTION_NAME }}"
             aws lambda delete-function --function-name ${{ env.FUNCTION_NAME }}
             echo "✅ Lambda function deleted successfully"
           else
             echo "ℹ️ Lambda function not found, skipping..."
           fi
 
-      - name: Delete API Gateway
+      - name: Cleanup API Gateway
         run: |
-          echo "🗑️ Deleting API Gateway: ${{ env.API_GATEWAY_NAME }}"
+          echo "🗑️ Cleaning up API Gateway..."
           API_ID=$(aws apigateway get-rest-apis --query 'items[?name==`${{ env.API_GATEWAY_NAME }}`].[id]' --output text | head -1)
           
           if [ ! -z "$API_ID" ] && [ "$API_ID" != "None" ]; then
@@ -86,84 +86,66 @@ jobs:
             echo "ℹ️ API Gateway not found, skipping..."
           fi
 
-      - name: Detach IAM Role Policies
+      - name: Cleanup IAM Resources
         run: |
-          echo "🔓 Detaching IAM role policies: ${{ env.ROLE_NAME }}"
+          # Get AWS account ID once
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          
+          echo "🗑️ Cleaning up IAM resources..."
+          
+          # Function to delete IAM policy with version cleanup
+          delete_iam_policy() {
+            local policy_name=$1
+            local policy_arn="arn:aws:iam::$ACCOUNT_ID:policy/$policy_name"
+            
+            echo "Deleting IAM policy: $policy_name"
+            if aws iam get-policy --policy-arn $policy_arn >/dev/null 2>&1; then
+              # Delete all policy versions first
+              aws iam list-policy-versions --policy-arn $policy_arn --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text | tr '\t' '\n' | while read version; do
+                if [ ! -z "$version" ]; then
+                  aws iam delete-policy-version --policy-arn $policy_arn --version-id $version || echo "Failed to delete version $version"
+                fi
+              done
+              
+              # Delete the policy
+              aws iam delete-policy --policy-arn $policy_arn
+              echo "✅ IAM policy $policy_name deleted successfully"
+            else
+              echo "ℹ️ IAM policy $policy_name not found, skipping..."
+            fi
+          }
+          
+          # Detach IAM role policies
           if aws iam get-role --role-name ${{ env.ROLE_NAME }} >/dev/null 2>&1; then
-            # Get account ID for policy ARN
-            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            echo "Detaching IAM role policies: ${{ env.ROLE_NAME }}"
             
             # Detach basic execution role
             aws iam detach-role-policy \
               --role-name ${{ env.ROLE_NAME }} \
               --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole || echo "Basic execution policy not attached"
             
-            # Detach custom S3 policy
+            # Detach custom policies
             aws iam detach-role-policy \
               --role-name ${{ env.ROLE_NAME }} \
               --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/${{ env.S3_POLICY_NAME }} || echo "S3 policy not attached"
             
-            # Detach custom API Gateway policy
             aws iam detach-role-policy \
               --role-name ${{ env.ROLE_NAME }} \
               --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/${{ env.API_POLICY_NAME }} || echo "API Gateway policy not attached"
             
             echo "✅ IAM role policies detached"
-          else
-            echo "ℹ️ IAM role not found, skipping policy detachment..."
-          fi
-
-      - name: Delete IAM Role
-        run: |
-          echo "🗑️ Deleting IAM role: ${{ env.ROLE_NAME }}"
-          if aws iam get-role --role-name ${{ env.ROLE_NAME }} >/dev/null 2>&1; then
+            
+            # Delete IAM role
+            echo "Deleting IAM role: ${{ env.ROLE_NAME }}"
             aws iam delete-role --role-name ${{ env.ROLE_NAME }}
             echo "✅ IAM role deleted successfully"
           else
-            echo "ℹ️ IAM role not found, skipping..."
+            echo "ℹ️ IAM role not found, skipping policy detachment..."
           fi
-
-      - name: Delete IAM Policy
-        run: |
-          echo "🗑️ Deleting IAM policy: ${{ env.API_POLICY_NAME }}"
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          POLICY_ARN="arn:aws:iam::$ACCOUNT_ID:policy/${{ env.API_POLICY_NAME }}"
           
-          if aws iam get-policy --policy-arn $POLICY_ARN >/dev/null 2>&1; then
-            # Delete all policy versions first
-            aws iam list-policy-versions --policy-arn $POLICY_ARN --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text | tr '\t' '\n' | while read version; do
-              if [ ! -z "$version" ]; then
-                aws iam delete-policy-version --policy-arn $POLICY_ARN --version-id $version || echo "Failed to delete version $version"
-              fi
-            done
-            
-            # Delete the policy
-            aws iam delete-policy --policy-arn $POLICY_ARN
-            echo "✅ IAM policy deleted successfully"
-          else
-            echo "ℹ️ IAM policy not found, skipping..."
-          fi
-
-      - name: Delete S3 IAM Policy
-        run: |
-          echo "🗑️ Deleting S3 IAM policy: ${{ env.S3_POLICY_NAME }}"
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          S3_POLICY_ARN="arn:aws:iam::$ACCOUNT_ID:policy/${{ env.S3_POLICY_NAME }}"
-          
-          if aws iam get-policy --policy-arn $S3_POLICY_ARN >/dev/null 2>&1; then
-            # Delete all policy versions first
-            aws iam list-policy-versions --policy-arn $S3_POLICY_ARN --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text | tr '\t' '\n' | while read version; do
-              if [ ! -z "$version" ]; then
-                aws iam delete-policy-version --policy-arn $S3_POLICY_ARN --version-id $version || echo "Failed to delete version $version"
-              fi
-            done
-            
-            # Delete the policy
-            aws iam delete-policy --policy-arn $S3_POLICY_ARN
-            echo "✅ S3 IAM policy deleted successfully"
-          else
-            echo "ℹ️ S3 IAM policy not found, skipping..."
-          fi
+          # Delete IAM policies
+          delete_iam_policy "${{ env.API_POLICY_NAME }}"
+          delete_iam_policy "${{ env.S3_POLICY_NAME }}"
 
       - name: Cleanup Summary
         run: |
