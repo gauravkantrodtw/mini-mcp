@@ -13,9 +13,17 @@ env:
   AWS_REGION: eu-central-1
   FUNCTION_NAME: mcp-server
   API_GATEWAY_NAME: mcp-server-api
+  
+  # IAM Resources
   ROLE_NAME: mini-mcp-server-role
-  POLICY_NAME: mcp-server-api-policy
+  API_POLICY_NAME: mcp-server-api-policy
   S3_POLICY_NAME: mcp-server-s3-policy
+  
+  # API Gateway Configuration
+  API_STAGE_NAME: prod
+  MCP_ENDPOINT_PATH: /mcp
+  HEALTH_ENDPOINT_PATH: /health
+  HTTP_METHOD: POST
 
 jobs:
   cleanup:
@@ -104,7 +112,7 @@ jobs:
             # Detach custom API Gateway policy
             aws iam detach-role-policy \
               --role-name ${{ env.ROLE_NAME }} \
-              --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/${{ env.POLICY_NAME }} || echo "API Gateway policy not attached"
+              --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/${{ env.API_POLICY_NAME }} || echo "API Gateway policy not attached"
             
             echo "✅ IAM role policies detached"
           else
@@ -123,9 +131,9 @@ jobs:
 
       - name: Delete IAM Policy
         run: |
-          echo "🗑️ Deleting IAM policy: ${{ env.POLICY_NAME }}"
+          echo "🗑️ Deleting IAM policy: ${{ env.API_POLICY_NAME }}"
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          POLICY_ARN="arn:aws:iam::$ACCOUNT_ID:policy/${{ env.POLICY_NAME }}"
+          POLICY_ARN="arn:aws:iam::$ACCOUNT_ID:policy/${{ env.API_POLICY_NAME }}"
           
           if aws iam get-policy --policy-arn $POLICY_ARN >/dev/null 2>&1; then
             # Delete all policy versions first
@@ -171,7 +179,7 @@ jobs:
           echo "   - Lambda Permissions: API Gateway invoke permissions"
           echo "   - API Gateway: ${{ env.API_GATEWAY_NAME }}"
           echo "   - IAM Role: ${{ env.ROLE_NAME }}"
-          echo "   - IAM Policy: ${{ env.POLICY_NAME }}"
+          echo "   - IAM Policy: ${{ env.API_POLICY_NAME }}"
           echo "   - S3 IAM Policy: ${{ env.S3_POLICY_NAME }}"
           echo ""
           echo "💡 To redeploy, run the main deployment workflow or use:"

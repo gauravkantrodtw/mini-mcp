@@ -10,6 +10,28 @@ env:
   FUNCTION_NAME: mcp-server
   LAMBDA_ARCHITECTURE: x86_64  # Change to arm64 if you want ARM64 Lambda
   API_GATEWAY_NAME: mcp-server-api
+  
+  # IAM Resources
+  ROLE_NAME: mini-mcp-server-role
+  API_POLICY_NAME: mcp-server-api-policy
+  S3_POLICY_NAME: mcp-server-s3-policy
+  
+  # S3 Configuration
+  S3_BUCKET_NAME: databricks-dev-external-ext-str-raw-data-eu-central-1
+  
+  # API Gateway Configuration
+  API_STAGE_NAME: prod
+  MCP_ENDPOINT_PATH: /mcp
+  HEALTH_ENDPOINT_PATH: /health
+  HTTP_METHOD: POST
+  AUTHORIZATION_TYPE: AWS_IAM
+  INTEGRATION_TYPE: AWS_PROXY
+  
+  # Lambda Configuration
+  RUNTIME: python3.12
+  MEMORY_SIZE: 1024
+  TIMEOUT: 120
+  HANDLER: lambda_handler.lambda_handler
 
 jobs:
   deploy:
@@ -53,7 +75,7 @@ jobs:
             
             # Create IAM role
             aws iam create-role \
-              --role-name mini-mcp-server-role \
+              --role-name ${{ env.ROLE_NAME }} \
               --assume-role-policy-document '{
                 "Version": "2012-10-17",
                 "Statement": [
@@ -69,12 +91,12 @@ jobs:
             
             # Attach basic execution policy
             aws iam attach-role-policy \
-              --role-name mini-mcp-server-role \
+              --role-name ${{ env.ROLE_NAME }} \
               --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole || true
             
             # Create least privilege S3 policy for specific bucket
             S3_POLICY_ARN=$(aws iam create-policy \
-              --policy-name mcp-server-s3-policy \
+              --policy-name ${{ env.S3_POLICY_NAME }} \
               --policy-document '{
                 "Version": "2012-10-17",
                 "Statement": [
@@ -85,8 +107,8 @@ jobs:
                       "s3:ListBucket"
                     ],
                     "Resource": [
-                      "arn:aws:s3:::databricks-dev-external-ext-str-raw-data-eu-central-1",
-                      "arn:aws:s3:::databricks-dev-external-ext-str-raw-data-eu-central-1/*"
+                      "arn:aws:s3:::${{ env.S3_BUCKET_NAME }}",
+                      "arn:aws:s3:::${{ env.S3_BUCKET_NAME }}/*"
                     ]
                   }
                 ]
@@ -97,13 +119,13 @@ jobs:
             # If S3 policy creation failed, get existing policy ARN
             if [ -z "$S3_POLICY_ARN" ]; then
               echo "S3 policy already exists, getting existing policy ARN..."
-              S3_POLICY_ARN=$(aws iam get-policy --policy-arn "arn:aws:iam::$ACCOUNT_ID:policy/mcp-server-s3-policy" --query 'Policy.Arn' --output text 2>/dev/null)
+              S3_POLICY_ARN=$(aws iam get-policy --policy-arn "arn:aws:iam::$ACCOUNT_ID:policy/${{ env.S3_POLICY_NAME }}" --query 'Policy.Arn' --output text 2>/dev/null)
             fi
             
             # Attach S3 policy to the Lambda execution role if we have a valid ARN
             if [ ! -z "$S3_POLICY_ARN" ]; then
               aws iam attach-role-policy \
-                --role-name mini-mcp-server-role \
+                --role-name ${{ env.ROLE_NAME }} \
                 --policy-arn $S3_POLICY_ARN || echo "S3 policy may already be attached"
             else
               echo "Warning: Could not create or find S3 policy ARN"
@@ -113,18 +135,18 @@ jobs:
             sleep 10
             
             # Get role ARN
-            ROLE_ARN=$(aws iam get-role --role-name mini-mcp-server-role --query 'Role.Arn' --output text)
+            ROLE_ARN=$(aws iam get-role --role-name ${{ env.ROLE_NAME }} --query 'Role.Arn' --output text)
             
             # Create Lambda function
             aws lambda create-function \
               --function-name ${{ env.FUNCTION_NAME }} \
-              --runtime python3.12 \
+              --runtime ${{ env.RUNTIME }} \
               --role $ROLE_ARN \
-              --handler lambda_handler.lambda_handler \
+              --handler ${{ env.HANDLER }} \
               --zip-file fileb://mcp-server-deployment.zip \
               --architecture ${{ env.LAMBDA_ARCHITECTURE }} \
-              --memory-size 1024 \
-              --timeout 120
+              --memory-size ${{ env.MEMORY_SIZE }} \
+              --timeout ${{ env.TIMEOUT }}
           fi
 
       - name: Wait for Lambda to be ready
@@ -212,15 +234,15 @@ jobs:
             ROOT_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query 'items[0].id' --output text)
             
             # Create /mcp endpoint
-            MCP_ID=$(aws apigateway create-resource --rest-api-id $API_ID --parent-id $ROOT_ID --path-part mcp --query 'id' --output text)
-            aws apigateway put-method --rest-api-id $API_ID --resource-id $MCP_ID --http-method POST --authorization-type AWS_IAM
+            MCP_ID=$(aws apigateway create-resource --rest-api-id $API_ID --parent-id $ROOT_ID --path-part ${{ env.MCP_ENDPOINT_PATH | replace('/', '') }} --query 'id' --output text)
+            aws apigateway put-method --rest-api-id $API_ID --resource-id $MCP_ID --http-method ${{ env.HTTP_METHOD }} --authorization-type ${{ env.AUTHORIZATION_TYPE }}
             
             # Get Lambda function ARN
             LAMBDA_ARN=$(aws lambda get-function --function-name ${{ env.FUNCTION_NAME }} --query 'Configuration.FunctionArn' --output text)
-            aws apigateway put-integration --rest-api-id $API_ID --resource-id $MCP_ID --http-method POST --type AWS_PROXY --integration-http-method POST --uri "arn:aws:apigateway:${{ env.AWS_REGION }}:lambda:path/2015-03-31/functions/$LAMBDA_ARN/invocations"
+            aws apigateway put-integration --rest-api-id $API_ID --resource-id $MCP_ID --http-method ${{ env.HTTP_METHOD }} --type ${{ env.INTEGRATION_TYPE }} --integration-http-method ${{ env.HTTP_METHOD }} --uri "arn:aws:apigateway:${{ env.AWS_REGION }}:lambda:path/2015-03-31/functions/$LAMBDA_ARN/invocations"
             
             # Deploy and set permissions
-            aws apigateway create-deployment --rest-api-id $API_ID --stage-name prod
+            aws apigateway create-deployment --rest-api-id $API_ID --stage-name ${{ env.API_STAGE_NAME }}
             
             # Get AWS account ID for proper ARN
             ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -234,18 +256,18 @@ jobs:
               --statement-id $STATEMENT_ID \
               --action lambda:InvokeFunction \
               --principal apigateway.amazonaws.com \
-              --source-arn "arn:aws:execute-api:${{ env.AWS_REGION }}:$ACCOUNT_ID:$API_ID/*/POST/mcp" || echo "Permission may already exist, continuing..."
+              --source-arn "arn:aws:execute-api:${{ env.AWS_REGION }}:$ACCOUNT_ID:$API_ID/*/${{ env.HTTP_METHOD }}${{ env.MCP_ENDPOINT_PATH }}" || echo "Permission may already exist, continuing..."
             
             # Create IAM policy for API Gateway access
             POLICY_ARN=$(aws iam create-policy \
-              --policy-name mcp-server-api-policy \
+              --policy-name ${{ env.API_POLICY_NAME }} \
               --policy-document '{
                 "Version": "2012-10-17",
                 "Statement": [
                   {
                     "Effect": "Allow",
                     "Action": "execute-api:Invoke",
-                    "Resource": "arn:aws:execute-api:'${{ env.AWS_REGION }}':*:'$API_ID'/*/POST/mcp"
+                    "Resource": "arn:aws:execute-api:'${{ env.AWS_REGION }}':*:'$API_ID'/*/${{ env.HTTP_METHOD }}${{ env.MCP_ENDPOINT_PATH }}"
                   }
                 ]
               }' \
@@ -255,13 +277,13 @@ jobs:
             # If policy creation failed, get existing policy ARN
             if [ -z "$POLICY_ARN" ]; then
               echo "Policy already exists, getting existing policy ARN..."
-              POLICY_ARN=$(aws iam get-policy --policy-arn "arn:aws:iam::$ACCOUNT_ID:policy/mcp-server-api-policy" --query 'Policy.Arn' --output text 2>/dev/null)
+              POLICY_ARN=$(aws iam get-policy --policy-arn "arn:aws:iam::$ACCOUNT_ID:policy/${{ env.API_POLICY_NAME }}" --query 'Policy.Arn' --output text 2>/dev/null)
             fi
             
             # Attach policy to the Lambda execution role if we have a valid ARN
             if [ ! -z "$POLICY_ARN" ]; then
               aws iam attach-role-policy \
-                --role-name mini-mcp-server-role \
+                --role-name ${{ env.ROLE_NAME }} \
                 --policy-arn $POLICY_ARN || echo "Policy may already be attached"
             else
               echo "Warning: Could not create or find policy ARN"
@@ -269,7 +291,7 @@ jobs:
             
             # Store API Gateway info for reference
             echo "API_GATEWAY_ID=$API_ID" >> $GITHUB_ENV
-            echo "API_GATEWAY_URL=https://$API_ID.execute-api.${{ env.AWS_REGION }}.amazonaws.com/prod" >> $GITHUB_ENV
+            echo "API_GATEWAY_URL=https://$API_ID.execute-api.${{ env.AWS_REGION }}.amazonaws.com/${{ env.API_STAGE_NAME }}" >> $GITHUB_ENV
           else
             echo "Using existing API Gateway: $API_ID"
             
@@ -277,25 +299,25 @@ jobs:
             LAMBDA_ARN=$(aws lambda get-function --function-name ${{ env.FUNCTION_NAME }} --query 'Configuration.FunctionArn' --output text)
             
             # Get the /mcp resource ID
-            MCP_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query 'items[?pathPart==`mcp`].[id]' --output text | head -1)
+            MCP_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query 'items[?pathPart==`${{ env.MCP_ENDPOINT_PATH | replace('/', '') }}`].[id]' --output text | head -1)
             
             if [ ! -z "$MCP_ID" ]; then
               # Update integration and set IAM authorization
-              aws apigateway put-integration --rest-api-id $API_ID --resource-id $MCP_ID --http-method POST --type AWS_PROXY --integration-http-method POST --uri "arn:aws:apigateway:${{ env.AWS_REGION }}:lambda:path/2015-03-31/functions/$LAMBDA_ARN/invocations"
-              aws apigateway update-method --rest-api-id $API_ID --resource-id $MCP_ID --http-method POST --patch-ops op=replace,path=/authorizationType,value=AWS_IAM
+              aws apigateway put-integration --rest-api-id $API_ID --resource-id $MCP_ID --http-method ${{ env.HTTP_METHOD }} --type ${{ env.INTEGRATION_TYPE }} --integration-http-method ${{ env.HTTP_METHOD }} --uri "arn:aws:apigateway:${{ env.AWS_REGION }}:lambda:path/2015-03-31/functions/$LAMBDA_ARN/invocations"
+              aws apigateway update-method --rest-api-id $API_ID --resource-id $MCP_ID --http-method ${{ env.HTTP_METHOD }} --patch-ops op=replace,path=/authorizationType,value=${{ env.AUTHORIZATION_TYPE }}
             fi
             
             # Redeploy to update the integration
-            aws apigateway create-deployment --rest-api-id $API_ID --stage-name prod
+            aws apigateway create-deployment --rest-api-id $API_ID --stage-name ${{ env.API_STAGE_NAME }}
           fi
           
           # Wait for deployment to complete
           sleep 3
           
           # Output endpoint URL
-          API_URL="https://$API_ID.execute-api.${{ env.AWS_REGION }}.amazonaws.com/prod"
-          echo "MCP Endpoint: $API_URL/mcp"
-          echo "Health Check: $API_URL/health"
+          API_URL="https://$API_ID.execute-api.${{ env.AWS_REGION }}.amazonaws.com/${{ env.API_STAGE_NAME }}"
+          echo "MCP Endpoint: $API_URL${{ env.MCP_ENDPOINT_PATH }}"
+          echo "Health Check: $API_URL${{ env.HEALTH_ENDPOINT_PATH }}"
 
       - name: Wait for API Gateway deployment
         run: |
@@ -306,16 +328,16 @@ jobs:
         run: |
           # Get the API Gateway URL
           API_ID=$(aws apigateway get-rest-apis --query 'items[?name==`${{ env.API_GATEWAY_NAME }}`].[id]' --output text | head -1)
-          API_URL="https://$API_ID.execute-api.${{ env.AWS_REGION }}.amazonaws.com/prod"
+          API_URL="https://$API_ID.execute-api.${{ env.AWS_REGION }}.amazonaws.com/${{ env.API_STAGE_NAME }}"
 
           echo "API Gateway URL: $API_URL"
-          echo "MCP Endpoint: $API_URL/mcp"
-          echo "Health Check: $API_URL/health"
+          echo "MCP Endpoint: $API_URL${{ env.MCP_ENDPOINT_PATH }}"
+          echo "Health Check: $API_URL${{ env.HEALTH_ENDPOINT_PATH }}"
 
           # Test health endpoint with retry
           echo "Testing health endpoint..."
           for i in {1..3}; do
-            if curl -X GET "$API_URL/health" --max-time 30; then
+            if curl -X GET "$API_URL${{ env.HEALTH_ENDPOINT_PATH }}" --max-time 30; then
               echo "Health check passed!"
               break
             else
@@ -328,7 +350,7 @@ jobs:
           echo "Testing MCP endpoint with IAM authentication..."
           
           # Get MCP resource ID
-          MCP_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query 'items[?pathPart==`mcp`].[id]' --output text | head -1)
+          MCP_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query 'items[?pathPart==`${{ env.MCP_ENDPOINT_PATH | replace('/', '') }}`].[id]' --output text | head -1)
           
           if [ -z "$MCP_ID" ]; then
             echo "❌ MCP resource not found in API Gateway"
@@ -353,7 +375,7 @@ jobs:
             if aws apigateway test-invoke-method \
               --rest-api-id $API_ID \
               --resource-id $MCP_ID \
-              --http-method POST \
+              --http-method ${{ env.HTTP_METHOD }} \
               --body file://test-mcp-payload.json \
               --headers 'Content-Type=application/json' > test-response.json; then
               echo "MCP test passed!"
