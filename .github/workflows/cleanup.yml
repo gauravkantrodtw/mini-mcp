@@ -18,12 +18,6 @@ env:
   ROLE_NAME: mini-mcp-server-role
   API_POLICY_NAME: mcp-server-api-policy
   S3_POLICY_NAME: mcp-server-s3-policy
-  
-  # API Gateway Configuration
-  API_STAGE_NAME: prod
-  MCP_ENDPOINT_PATH: /mcp
-  HEALTH_ENDPOINT_PATH: /health
-  HTTP_METHOD: POST
 
 jobs:
   cleanup:
