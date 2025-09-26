@@ -15,9 +15,7 @@ from starlette.routing import Route
 # Cold start optimization: Import heavy modules at module level
 # This ensures they're loaded during container initialization, not on first request
 from server import mcp
-import tools.csv_tools  # auto-registers all MCP tools
-import tools.additional_tools  # auto-registers additional MCP tools
-import tools.s3_csv_tools  # auto-registers S3 CSV tools
+import tools  # auto-registers all MCP tools via __init__.py
 
 # Configure logging once at module level
 logger = logging.getLogger()

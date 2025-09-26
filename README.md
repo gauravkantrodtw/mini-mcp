@@ -100,8 +100,8 @@ The MCP proxy automatically connects to your deployed server using the configure
 ├── mcp_proxy.py              # MCP proxy for Cursor
 ├── server.py                 # MCP server configuration
 ├── tools/
+│   ├── __init__.py           # Auto-registers all tools
 │   ├── csv_tools.py          # Local CSV analysis tools
-│   ├── additional_tools.py   # Additional CSV tools
 │   └── s3_csv_tools.py       # S3 CSV analysis tools
 ├── utils/
 │   ├── file_reader.py        # Local file utilities
