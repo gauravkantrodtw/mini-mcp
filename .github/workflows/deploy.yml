@@ -2,8 +2,7 @@ name: Deploy MCP Server to AWS Lambda
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [ main ]
+
 
 env:
   AWS_REGION: eu-central-1
@@ -22,6 +21,7 @@ env:
   # API Gateway Configuration
   API_STAGE_NAME: prod
   MCP_ENDPOINT_PATH: /mcp
+  MCP_ENDPOINT_PATH_PART: mcp
   HEALTH_ENDPOINT_PATH: /health
   HTTP_METHOD: POST
   AUTHORIZATION_TYPE: AWS_IAM
@@ -234,7 +234,7 @@ jobs:
             ROOT_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query 'items[0].id' --output text)
             
             # Create /mcp endpoint
-            MCP_ID=$(aws apigateway create-resource --rest-api-id $API_ID --parent-id $ROOT_ID --path-part ${{ env.MCP_ENDPOINT_PATH | replace('/', '') }} --query 'id' --output text)
+            MCP_ID=$(aws apigateway create-resource --rest-api-id $API_ID --parent-id $ROOT_ID --path-part ${{ env.MCP_ENDPOINT_PATH_PART }} --query 'id' --output text)
             aws apigateway put-method --rest-api-id $API_ID --resource-id $MCP_ID --http-method ${{ env.HTTP_METHOD }} --authorization-type ${{ env.AUTHORIZATION_TYPE }}
             
             # Get Lambda function ARN
@@ -299,7 +299,7 @@ jobs:
             LAMBDA_ARN=$(aws lambda get-function --function-name ${{ env.FUNCTION_NAME }} --query 'Configuration.FunctionArn' --output text)
             
             # Get the /mcp resource ID
-            MCP_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query 'items[?pathPart==`${{ env.MCP_ENDPOINT_PATH | replace('/', '') }}`].[id]' --output text | head -1)
+            MCP_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query 'items[?pathPart==`${{ env.MCP_ENDPOINT_PATH_PART }}`].[id]' --output text | head -1)
             
             if [ ! -z "$MCP_ID" ]; then
               # Update integration and set IAM authorization
@@ -350,7 +350,7 @@ jobs:
           echo "Testing MCP endpoint with IAM authentication..."
           
           # Get MCP resource ID
-          MCP_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query 'items[?pathPart==`${{ env.MCP_ENDPOINT_PATH | replace('/', '') }}`].[id]' --output text | head -1)
+          MCP_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query 'items[?pathPart==`${{ env.MCP_ENDPOINT_PATH_PART }}`].[id]' --output text | head -1)
           
           if [ -z "$MCP_ID" ]; then
             echo "❌ MCP resource not found in API Gateway"
