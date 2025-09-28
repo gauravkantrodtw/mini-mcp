@@ -1,4 +1,4 @@
-# Mini MCP Server
+# DAAP MCP Server
 
 A lightweight MCP (Model Context Protocol) server for CSV analysis, deployable to AWS Lambda.
 

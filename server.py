@@ -9,4 +9,4 @@ logging.basicConfig(
 )
 
 # Shared MCP server instance
-mcp = FastMCP("mini_mcp_server")
+mcp = FastMCP("daap-mcp-server")

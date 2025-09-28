@@ -105,7 +105,7 @@ def extract_schema_from_description(tool_data):
     return {"type": "object", "properties": {}, "required": []}
 
 # Create the server instance
-server = Server("mini-mcp-server")
+server = Server("daap-mcp-server")
 
 @server.list_tools()
 async def list_tools() -> List[Tool]:
