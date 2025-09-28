@@ -1,103 +1,298 @@
 #!/usr/bin/env python3
 """
-AWS Lambda entrypoint for the MCP server.
-Optimized for cold start performance.
+Direct AWS Lambda handler for FastMCP server without Mangum.
+This bypasses ASGI issues by handling MCP protocol directly.
 """
 
-import json
 import logging
 import time
-from mangum import Mangum
-from starlette.applications import Starlette
-from starlette.responses import JSONResponse
-from starlette.routing import Route
-
-# Cold start optimization: Import heavy modules at module level
-# This ensures they're loaded during container initialization, not on first request
+import json
+import asyncio
 from server import mcp
-import tools  # auto-registers all MCP tools via __init__.py
 
-# Configure logging once at module level
+# Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Global handler instance (created once per Lambda container)
-_handler = None
+# Global MCP server instance (created once per Lambda container)
+_mcp_server = None
 
-async def handle_mcp_request(request_body: str) -> dict:
-    """Handle MCP request and return JSON-RPC response."""
-    try:
-        request_data = json.loads(request_body)
-        method = request_data.get("method")
-        params = request_data.get("params", {})
-        request_id = request_data.get("id")
-        
-        logger.info(f"Processing MCP request: {method}")
-        
-        if method == "tools/list":
-            tools_list = await mcp.list_tools()
-            result = [{"name": tool.name, "description": tool.description} for tool in tools_list]
-        elif method == "tools/call":
-            tool_name = params.get("name")
-            tool_args = params.get("arguments", {})
-            tool_result = await mcp.call_tool(tool_name, tool_args)
-            result = tool_result.content if hasattr(tool_result, 'content') else str(tool_result)
-        else:
-            result = {"error": f"Unknown method: {method}"}
-        
-        return {"jsonrpc": "2.0", "id": request_id, "result": result}
-        
-    except Exception as e:
-        logger.error(f"Error handling MCP request: {e}", exc_info=True)
-        return {
-            "jsonrpc": "2.0",
-            "id": request_data.get("id") if 'request_data' in locals() else None,
-            "error": {"code": -32603, "message": "Internal error"}
-        }
-
-
-def get_handler():
-    """Get or create ASGI handler for Lambda."""
-    global _handler
-    if _handler is None:
-        async def mcp_endpoint(request):
-            body = await request.body()
-            return JSONResponse(await handle_mcp_request(body.decode()))
-        
-        async def health_endpoint(request):
-            return JSONResponse({
-                "status": "healthy",
-                "service": "MCP Server",
-                "timestamp": time.time()
-            })
-        
-        app = Starlette(routes=[
-            Route("/mcp", mcp_endpoint, methods=["POST"]),
-            Route("/health", health_endpoint, methods=["GET"])
-        ])
-
-        _handler = Mangum(app, lifespan="off")
-        logger.info("Lambda handler initialized")
-    return _handler
+def get_mcp_server():
+    """Get or create MCP server instance for Lambda."""
+    global _mcp_server
+    if _mcp_server is None:
+        _mcp_server = mcp
+        logger.info("FastMCP server initialized for direct Lambda handling")
+    return _mcp_server
 
 def lambda_handler(event, context):
-    """AWS Lambda handler function."""
+    """AWS Lambda handler function with direct MCP protocol handling."""
     start_time = time.time()
+    
     try:
-        response = get_handler()(event, context)
-        logger.info("Processed request in %.3fs", time.time() - start_time)
-        return response
+        # Parse the API Gateway event
+        http_method = event.get('requestContext', {}).get('http', {}).get('method', '')
+        path = event.get('rawPath', '')
+        headers = event.get('headers', {})
+        body = event.get('body', '')
+        
+        logger.info(f"Processing {http_method} {path}")
+        
+        # Handle health check endpoint
+        if path == '/health' and http_method == 'GET':
+            return {
+                "statusCode": 200,
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, Authorization"
+                },
+                "body": json.dumps({"status": "healthy", "service": "daap-mcp-server"})
+            }
+        
+        # Handle MCP endpoint
+        elif path == '/mcp' and http_method == 'POST':
+            return handle_mcp_request(body, headers)
+        
+        # Handle CORS preflight
+        elif http_method == 'OPTIONS':
+            return {
+                "statusCode": 200,
+                "headers": {
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, Authorization"
+                },
+                "body": ""
+            }
+        
+        # Handle unsupported endpoints
+        else:
+            return {
+                "statusCode": 404,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "Not Found", "message": f"No handler for {http_method} {path}"})
+            }
+    
     except Exception as e:
-        logger.error("Lambda handler error: %s", str(e), exc_info=True)
+        logger.error(f"Lambda handler error: {str(e)}", exc_info=True)
         return {
             "statusCode": 500,
             "headers": {"Content-Type": "application/json"},
-            "body": '{"error": "Internal server error"}'
+            "body": json.dumps({"error": "Internal Server Error", "message": str(e)})
+        }
+    
+    finally:
+        logger.info(f"Processed request in {time.time() - start_time:.3f}s")
+
+def handle_mcp_request(body, headers):
+    """Handle MCP protocol requests directly."""
+    try:
+        # Parse MCP request
+        if not body:
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "Bad Request", "message": "Empty request body"})
+            }
+        
+        try:
+            mcp_request = json.loads(body)
+        except json.JSONDecodeError as e:
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "Bad Request", "message": f"Invalid JSON: {str(e)}"})
+            }
+        
+        # Validate MCP request format
+        if not isinstance(mcp_request, dict) or 'jsonrpc' not in mcp_request:
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "Bad Request", "message": "Invalid MCP request format"})
+            }
+        
+        # Handle MCP request asynchronously
+        response = asyncio.run(process_mcp_request(mcp_request))
+        
+        return {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization"
+            },
+            "body": json.dumps(response)
+        }
+    
+    except Exception as e:
+        logger.error(f"MCP request handling error: {str(e)}", exc_info=True)
+        return {
+            "statusCode": 500,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"error": "Internal Server Error", "message": str(e)})
+        }
+
+async def process_mcp_request(request):
+    """Process MCP request using FastMCP directly."""
+    try:
+        method = request.get('method', '')
+        params = request.get('params', {})
+        request_id = request.get('id')
+        
+        logger.info(f"Processing MCP method: {method}")
+        
+        # Handle different MCP methods
+        if method == 'tools/list':
+            tools = await mcp.get_tools()
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "tools": [
+                        {
+                            "name": name,
+                            "description": tool.description,
+                            "inputSchema": tool.parameters
+                        }
+                        for name, tool in tools.items()
+                    ]
+                }
+            }
+        
+        elif method == 'tools/call':
+            tool_name = params.get('name', '')
+            tool_args = params.get('arguments', {})
+            
+            if not tool_name:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32602,
+                        "message": "Invalid params",
+                        "data": "Tool name is required"
+                    }
+                }
+            
+            # Get the tool function
+            tools = await mcp.get_tools()
+            if tool_name not in tools:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32601,
+                        "message": "Method not found",
+                        "data": f"Tool '{tool_name}' not found"
+                    }
+                }
+            
+            # Call the tool
+            tool_obj = tools[tool_name]
+            try:
+                # Check if the function is async
+                import asyncio
+                if asyncio.iscoroutinefunction(tool_obj.fn):
+                    result = await tool_obj.fn(**tool_args)
+                else:
+                    result = tool_obj.fn(**tool_args)
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": str(result)
+                            }
+                        ]
+                    }
+                }
+            except Exception as e:
+                logger.error(f"Tool execution error: {str(e)}", exc_info=True)
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32603,
+                        "message": "Internal error",
+                        "data": f"Tool execution failed: {str(e)}"
+                    }
+                }
+        
+        elif method == 'initialize':
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {
+                        "tools": {}
+                    },
+                    "serverInfo": {
+                        "name": "daap-mcp-server",
+                        "version": "1.0.0"
+                    }
+                }
+            }
+        
+        else:
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32601,
+                    "message": "Method not found",
+                    "data": f"Unknown method: {method}"
+                }
+            }
+    
+    except Exception as e:
+        logger.error(f"MCP processing error: {str(e)}", exc_info=True)
+        return {
+            "jsonrpc": "2.0",
+            "id": request.get('id'),
+            "error": {
+                "code": -32603,
+                "message": "Internal error",
+                "data": str(e)
+            }
         }
 
 # Local test mode
 if __name__ == "__main__":
-    test_event = {
+    # Test health endpoint
+    health_event = {
+        "version": "2.0",
+        "routeKey": "GET /health",
+        "rawPath": "/health",
+        "headers": {"content-type": "application/json"},
+        "requestContext": {
+            "http": {
+                "method": "GET", 
+                "path": "/health", 
+                "protocol": "HTTP/1.1",
+                "sourceIp": "127.0.0.1"
+            },
+            "requestId": "test-health-request-id"
+        },
+        "body": "",
+        "isBase64Encoded": False,
+    }
+
+    logger.info("Testing direct Lambda handler...")
+    logger.info("Testing health endpoint...")
+    result = lambda_handler(health_event, None)
+    logger.info("Health response:")
+    logger.info(f"Status Code: {result.get('statusCode')}")
+    logger.info(f"Body: {result.get('body')}")
+    
+    # Test MCP tools/list endpoint
+    mcp_event = {
         "version": "2.0",
         "routeKey": "POST /mcp",
         "rawPath": "/mcp",
@@ -109,14 +304,39 @@ if __name__ == "__main__":
                 "protocol": "HTTP/1.1",
                 "sourceIp": "127.0.0.1"
             },
-            "requestId": "test-request-id"
+            "requestId": "test-mcp-request-id"
         },
         "body": '{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}',
         "isBase64Encoded": False,
     }
-
-    logger.info("Testing Lambda handler locally...")
-    result = lambda_handler(test_event, None)
-    logger.info("Response:")
-    logger.info(json.dumps(result, indent=2))
-
+    
+    logger.info("Testing MCP tools/list endpoint...")
+    result = lambda_handler(mcp_event, None)
+    logger.info("MCP response:")
+    logger.info(f"Status Code: {result.get('statusCode')}")
+    logger.info(f"Body: {result.get('body')}")
+    
+    # Test MCP tools/call endpoint
+    tool_call_event = {
+        "version": "2.0",
+        "routeKey": "POST /mcp",
+        "rawPath": "/mcp",
+        "headers": {"content-type": "application/json"},
+        "requestContext": {
+            "http": {
+                "method": "POST", 
+                "path": "/mcp", 
+                "protocol": "HTTP/1.1",
+                "sourceIp": "127.0.0.1"
+            },
+            "requestId": "test-tool-call-request-id"
+        },
+        "body": '{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "summarize_csv_file", "arguments": {"filename": "sample.csv"}}}',
+        "isBase64Encoded": False,
+    }
+    
+    logger.info("Testing MCP tools/call endpoint...")
+    result = lambda_handler(tool_call_event, None)
+    logger.info("Tool call response:")
+    logger.info(f"Status Code: {result.get('statusCode')}")
+    logger.info(f"Body: {result.get('body')}")

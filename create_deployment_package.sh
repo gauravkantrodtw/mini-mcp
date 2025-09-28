@@ -32,12 +32,15 @@ cd ..
 echo "Adding source code files to root of zip..."
 zip mcp-server-deployment.zip lambda_handler.py
 zip mcp-server-deployment.zip server.py
-zip mcp-server-deployment.zip main.py
 
 # Add directories to root of zip
 zip -r mcp-server-deployment.zip tools/
 zip -r mcp-server-deployment.zip utils/
 zip -r mcp-server-deployment.zip data/
+
+# Ensure new utility files are included
+echo "Verifying utility files are included..."
+zip -l mcp-server-deployment.zip | grep -E "(logger\.py|error_handler\.py)" || echo "Warning: Utility files not found in package"
 
 echo "Deployment package created: mcp-server-deployment.zip"
 echo "Package size: $(du -h mcp-server-deployment.zip | cut -f1)"
