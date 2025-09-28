@@ -115,8 +115,8 @@ if __name__ == "__main__":
         "isBase64Encoded": False,
     }
 
-    print("Testing Lambda handler locally...")
+    logger.info("Testing Lambda handler locally...")
     result = lambda_handler(test_event, None)
-    print("Response:")
-    print(json.dumps(result, indent=2))
+    logger.info("Response:")
+    logger.info(json.dumps(result, indent=2))
 
