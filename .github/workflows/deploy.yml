@@ -68,15 +68,17 @@ jobs:
           
           # Check if function exists
           if aws lambda get-function --function-name ${{ env.FUNCTION_NAME }} >/dev/null 2>&1; then
-            echo "Updating existing function..."
+            echo "🔄 Updating existing Lambda function..."
             aws lambda update-function-code \
               --function-name ${{ env.FUNCTION_NAME }} \
               --zip-file fileb://mcp-server-deployment.zip
+            echo "✅ Lambda function updated successfully"
           else
-            echo "Creating new function..."
+            echo "🆕 Creating new Lambda function..."
             
-            # Create IAM role
-            aws iam create-role \
+            # Create IAM role (ignore if already exists)
+            echo "Creating IAM role: ${{ env.ROLE_NAME }}"
+            if aws iam create-role \
               --role-name ${{ env.ROLE_NAME }} \
               --assume-role-policy-document '{
                 "Version": "2012-10-17",
@@ -89,7 +91,11 @@ jobs:
                     "Action": "sts:AssumeRole"
                   }
                 ]
-              }' || echo "Role may already exist"
+              }' 2>/dev/null; then
+              echo "✅ IAM role created successfully"
+            else
+              echo "ℹ️  IAM role already exists, continuing..."
+            fi
             
             # Attach basic execution policy
             aws iam attach-role-policy \
@@ -134,8 +140,10 @@ jobs:
             sleep 10
             
             # Get role ARN and create Lambda function
+            echo "Creating Lambda function: ${{ env.FUNCTION_NAME }}"
             ROLE_ARN=$(aws iam get-role --role-name ${{ env.ROLE_NAME }} --query 'Role.Arn' --output text)
-            aws lambda create-function \
+            
+            if aws lambda create-function \
               --function-name ${{ env.FUNCTION_NAME }} \
               --runtime ${{ env.RUNTIME }} \
               --role $ROLE_ARN \
@@ -143,7 +151,21 @@ jobs:
               --zip-file fileb://mcp-server-deployment.zip \
               --architecture ${{ env.LAMBDA_ARCHITECTURE }} \
               --memory-size ${{ env.MEMORY_SIZE }} \
-              --timeout ${{ env.TIMEOUT }}
+              --timeout ${{ env.TIMEOUT }} 2>/dev/null; then
+              echo "✅ Lambda function created successfully"
+            else
+              echo "❌ Failed to create Lambda function, but continuing..."
+              # Check if function exists
+              if aws lambda get-function --function-name ${{ env.FUNCTION_NAME }} >/dev/null 2>&1; then
+                echo "ℹ️  Lambda function already exists, updating code..."
+                aws lambda update-function-code \
+                  --function-name ${{ env.FUNCTION_NAME }} \
+                  --zip-file fileb://mcp-server-deployment.zip
+              else
+                echo "❌ Lambda function creation failed and function doesn't exist"
+                exit 1
+              fi
+            fi
           fi
 
       - name: Wait for Lambda to be ready
