@@ -260,6 +260,7 @@ jobs:
           # Delete IAM policies
           delete_iam_policy "daap-mcp-server-api-policy-${{ github.event.inputs.environment }}"
           delete_iam_policy "daap-mcp-server-s3-policy-${{ github.event.inputs.environment }}"
+          delete_iam_policy "daap-mcp-server-deployment-s3-policy-${{ github.event.inputs.environment }}"
 
       - name: Dry run - IAM cleanup
         if: github.event.inputs.dry_run == 'true'
@@ -268,6 +269,7 @@ jobs:
           echo "🔍 DRY RUN: Would delete IAM policies:"
           echo "   - daap-mcp-server-api-policy-${{ github.event.inputs.environment }}"
           echo "   - daap-mcp-server-s3-policy-${{ github.event.inputs.environment }}"
+          echo "   - daap-mcp-server-deployment-s3-policy-${{ github.event.inputs.environment }}"
           echo "🔍 DRY RUN: Would detach all policies from the role"
 
   cleanup-summary:

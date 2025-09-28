@@ -5,8 +5,6 @@ This replaces the need for a proxy by providing direct HTTP endpoints.
 """
 
 from fastmcp import FastMCP
-from starlette.responses import JSONResponse
-from starlette.applications import Starlette
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -23,23 +21,7 @@ import tools
 @mcp.custom_route("/health", methods=["GET"])
 async def health_check(request):
     """Health check endpoint for monitoring."""
-    return JSONResponse({"status": "healthy", "service": "daap-mcp-server"})
-
-# Get ASGI app for Lambda deployment
-def get_app():
-    """Get the ASGI application for Lambda deployment."""
-    # Get the FastMCP app with proper lifespan handling
-    mcp_app = mcp.http_app(transport="http")
-    
-    # Create a Starlette app with the FastMCP lifespan
-    # This is required for proper ASGI integration with Mangum
-    app = Starlette(
-        routes=mcp_app.routes,
-        middleware=mcp_app.middleware_stack,
-        lifespan=mcp_app.lifespan
-    )
-    
-    return app
+    return {"status": "healthy", "service": "daap-mcp-server"}
 
 # For local development
 if __name__ == "__main__":

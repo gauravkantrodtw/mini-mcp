@@ -109,6 +109,23 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Upload deployment package to S3
+        run: |
+          # Get AWS account ID
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          S3_BUCKET="lambda-deployment-packages-$ACCOUNT_ID"
+          
+          # Create S3 bucket if it doesn't exist
+          aws s3 mb s3://$S3_BUCKET --region ${{ env.AWS_REGION }} || echo "Bucket may already exist"
+          
+          # Upload deployment package to S3
+          S3_KEY="mcp-server-deployment-${{ github.event.inputs.environment }}-$(date +%s).zip"
+          aws s3 cp mcp-server-deployment.zip s3://$S3_BUCKET/$S3_KEY
+          
+          # Store S3 location for Lambda deployment
+          echo "S3_BUCKET=$S3_BUCKET" >> $GITHUB_ENV
+          echo "S3_KEY=$S3_KEY" >> $GITHUB_ENV
+
       - name: Deploy Lambda function
         run: |
           # Get AWS account ID
@@ -119,7 +136,8 @@ jobs:
             echo "🔄 Updating existing Lambda function..."
             aws lambda update-function-code \
               --function-name ${{ needs.validate.outputs.function_name }} \
-              --zip-file fileb://mcp-server-deployment.zip
+              --s3-bucket ${{ env.S3_BUCKET }} \
+              --s3-key ${{ env.S3_KEY }}
           else
             echo "🆕 Creating new Lambda function..."
             
@@ -144,7 +162,7 @@ jobs:
               --role-name ${{ needs.validate.outputs.role_name }} \
               --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole || true
             
-            # Create S3 policy
+            # Create S3 policy for data access
             S3_POLICY_ARN=$(aws iam create-policy \
               --policy-name "daap-mcp-server-s3-policy-${{ github.event.inputs.environment }}" \
               --policy-document '{
@@ -163,6 +181,23 @@ jobs:
               --query 'Policy.Arn' \
               --output text 2>/dev/null)
             
+            # Create S3 policy for deployment packages
+            DEPLOYMENT_S3_BUCKET="lambda-deployment-packages-$ACCOUNT_ID"
+            S3_DEPLOYMENT_POLICY_ARN=$(aws iam create-policy \
+              --policy-name "daap-mcp-server-deployment-s3-policy-${{ github.event.inputs.environment }}" \
+              --policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Action": ["s3:GetObject"],
+                    "Resource": "arn:aws:s3:::'$DEPLOYMENT_S3_BUCKET'/*"
+                  }
+                ]
+              }' \
+              --query 'Policy.Arn' \
+              --output text 2>/dev/null)
+            
             if [ -z "$S3_POLICY_ARN" ]; then
               S3_POLICY_ARN=$(aws iam get-policy --policy-arn "arn:aws:iam::$ACCOUNT_ID:policy/daap-mcp-server-s3-policy-${{ github.event.inputs.environment }}" --query 'Policy.Arn' --output text 2>/dev/null)
             fi
@@ -171,6 +206,12 @@ jobs:
               aws iam attach-role-policy \
                 --role-name ${{ needs.validate.outputs.role_name }} \
                 --policy-arn $S3_POLICY_ARN || echo "S3 policy may already be attached"
+            fi
+            
+            if [ ! -z "$S3_DEPLOYMENT_POLICY_ARN" ]; then
+              aws iam attach-role-policy \
+                --role-name ${{ needs.validate.outputs.role_name }} \
+                --policy-arn $S3_DEPLOYMENT_POLICY_ARN || echo "S3 deployment policy may already be attached"
             fi
             
             # Wait for role to be ready
@@ -183,7 +224,7 @@ jobs:
               --runtime ${{ env.RUNTIME }} \
               --role $ROLE_ARN \
               --handler ${{ env.HANDLER }} \
-              --zip-file fileb://mcp-server-deployment.zip \
+              --code S3Bucket=${{ env.S3_BUCKET }},S3Key=${{ env.S3_KEY }} \
               --architecture ${{ env.LAMBDA_ARCHITECTURE }} \
               --memory-size ${{ env.MEMORY_SIZE }} \
               --timeout ${{ env.TIMEOUT }}
